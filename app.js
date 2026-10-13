@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v29";
+const APP_VER = "v30";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -271,12 +271,19 @@ function overviewHtml() {
 }
 
 /* ---------- 班表（人 × 日期） ---------- */
+const SHICON = { am: "☀️ 早班", pm: "🌙 晚班" };
 function cellInner(c, av) {
   if (!c) return avTag(av);
   if (c.s === "off") return avTag(av) + `<span class="offt">休</span>`;
-  return avTag(av) + `<span class="shtag sh-${c.s}">${SH1[c.s]}</span>` + (c.st || []).map(id => `<span class="st">${esc(sName(id))}</span>`).join("") + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
+  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map(id => `<span class="st">${esc(sName(id))}</span>`).join("")}</div>` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
 }
+const SHIFT_GROUP = [["am", "☀️ 早班人員"], ["pm", "🌙 晚班人員"], ["any", "早晚都可"]];
 function personRows(list, days, src, changed) {
+  const grp = e => e.shift === "am" || e.shift === "pm" ? e.shift : "any";
+  const groups = SHIFT_GROUP.map(([k, label]) => [k, label, list.filter(e => grp(e) === k)]).filter(g => g[2].length);
+  return groups.map(([k, label, l]) => (groups.length > 1 ? `<tr class="grp grp-${k}"><td class="sticky">${label}（${l.length}）</td><td colspan="${days.length + 1}"></td></tr>` : "") + personRows1(l, days, src, changed)).join("");
+}
+function personRows1(list, days, src, changed) {
   return list.map(e => {
     let work = 0, cnt = 0;
     const tds = days.map(d => {
@@ -284,7 +291,7 @@ function personRows(list, days, src, changed) {
       if (c && c.s !== "off") { work++; cnt += (c.st || []).length; }
       const bad = av && c && c.s !== "off" && avBad(av, c.s);
       const ch = changed && changed(d.ds, e.id);
-      return `<td class="c ${c?.s === "off" ? "off" : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av)}</td>`;
+      return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av)}</td>`;
     }).join("");
     return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? ` <span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot">${work}天<br><span class="small">${cnt}店次</span></td></tr>`;
   }).join("");
@@ -313,7 +320,7 @@ function gridHtml() {
     ${missRow(days, cell)}</thead>
     <tbody>${personRows(list, days, cell) || `<tr><td class="sticky" style="padding:20px" colspan="${days.length + 2}">這間主要門市還沒有人員，請到「人員」新增或從 Apollo 匯入。</td></tr>`}</tbody>
   </table></div>
-  <div class="legend" style="margin-top:8px"><span><span class="shtag sh-am">早</span>早班</span><span><span class="shtag sh-pm">晚</span>晚班</span><span>右上角小標＝員工畫休</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
+  <div class="legend" style="margin-top:8px"><span><i style="background:#fff7e0;border-left:4px solid #f59e0b"></i>☀️ 早班</span><span><i style="background:#ecebff;border-left:4px solid #6366f1"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
 }
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
@@ -356,7 +363,7 @@ function autoHtml() {
       ${p.notes.length ? `<span class="small" style="color:var(--warn)">${p.notes.map(esc).join("；")}</span>` : ""}
       <span class="spacer"></span><button class="btn" data-act="autoCancel">取消</button><button class="btn" data-act="autoRun">重新產生</button><button class="btn primary big" data-act="autoSave" ${nChg ? "" : "disabled"}>確認寫入</button>
     </div>
-    <p class="muted small">黃底是這次會改的格子。確認寫入後還是可以到「班表」點格子手動調整。</p>
+    <p class="muted small">左上角有<b style="color:#2563eb">藍點</b>的是這次會改的格子。確認寫入後還是可以到「班表」點格子手動調整。</p>
     <div class="scroll"><table class="sg">
       <thead><tr><th class="sticky">${esc(hub?.name)}</th>${days.map(d => `<th class="${d.today ? "today" : ""} ${d.we ? "we" : ""}">${d.m}/${d.d}<br>${d.wd}</th>`).join("")}<th>合計</th></tr>${missRow(days, src)}</thead>
       <tbody>${personRows(list, days, src, changed)}</tbody></table></div></div>`;

@@ -258,9 +258,6 @@ table.list.emp input[type=text],table.list.emp select{padding:3px 6px}
 .sh-am{background:#dbeafe;color:#1d4ed8}
 .sh-pm{background:#ede9fe;color:#6d28d9}
 .offt{color:var(--off);font-weight:500}
-.sg td.c.chg{background:#fef9c3}
-.sg td.c.we{background:#fafbfd}
-.sg td.c.chg.we{background:#fef9c3}
 .warnbox{border-color:#fcd34d!important;background:#fffbeb}
 .nowrap{white-space:nowrap}
 .rules{display:grid;gap:10px}
@@ -270,3 +267,32 @@ table.list.emp input[type=text],table.list.emp select{padding:3px 6px}
 .btn.big{padding:8px 18px;font-weight:500}
 .missbtn{display:inline-block}
 @media (max-width:640px){.topctl .rname{display:none}.hubpick{font-size:0}.hubpick select{font-size:14px}}
+
+/* ===== 班表 v2：大字、早晚班整格上色 ===== */
+table.sg{font-size:14px}
+.sg thead th{min-width:92px;height:44px;font-size:14px;color:var(--text)}
+.sg thead tr.missrow th{top:44px;height:28px;font-size:13px}
+.sg .sticky{font-size:15px;font-weight:500;min-width:96px;padding:0 12px}
+.sg td.c{min-width:92px;max-width:130px;height:auto;padding:6px 6px 7px;line-height:1.35;vertical-align:top;background:#fff;position:relative}
+.sg td.c.we{background:#fcfcfd}
+.sg td.c.s-am{background:#fff7e0;box-shadow:inset 4px 0 0 #f59e0b}
+.sg td.c.s-pm{background:#ecebff;box-shadow:inset 4px 0 0 #6366f1}
+.sg td.c.s-off{background:#f4f5f7}
+.sg td.c.s-off .offt{display:block;padding-top:8px;color:#9aa3af;font-size:15px}
+.sg td.c .shl{font-size:12px;font-weight:700;margin-bottom:3px;white-space:nowrap}
+.sg td.c.s-am .shl{color:#b45309}
+.sg td.c.s-pm .shl{color:#4338ca}
+.sg td.c .sts{display:flex;flex-wrap:wrap;gap:3px;justify-content:center}
+.sg td.c .st{font-size:14px;font-weight:500;padding:1px 6px;margin:0;background:#fff;border:1px solid rgba(0,0,0,.08);color:var(--text)}
+.sg td.c.s-am .st{border-color:#fcd38d}
+.sg td.c.s-pm .st{border-color:#c7c4fb}
+.sg td.c:hover{filter:brightness(.97)}
+.sg td.c.chg{background-image:none}
+.sg td.c.chg::after{content:"";position:absolute;top:4px;left:8px;width:7px;height:7px;border-radius:50%;background:#2563eb}
+.sg td.c.avbad{outline:2px solid var(--warn);outline-offset:-2px}
+.sg td.tot{font-size:14px;min-width:64px;color:var(--text)}
+.sg tr.grp td{background:#f1f5f9;font-size:13px;font-weight:700;color:#334155;height:30px;border-top:2px solid #e2e8f0}
+.sg tr.grp-am td.sticky{color:#b45309}
+.sg tr.grp-pm td.sticky{color:#4338ca}
+.missbtn{font-size:13px}
+.sg td.c.chg:not(.s-am):not(.s-pm):not(.s-off){background:#fff}
