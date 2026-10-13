@@ -936,7 +936,7 @@ async function restore(f) {
 
 /* ================= 人員名單解析（Apollo／貼上共用） ================= */
 const NAME_RE = /^[一-鿿·．]{2,6}$/;
-const CODE_RE = /\b(SPX?\d{3,}|[A-Z]{1,3}\d{4,})\b/i;
+const CODE_RE = /(?<![A-Za-z0-9@._-])(SPX?\d{3,})(?![A-Za-z0-9@._-])/i;
 function rowFromCells(cells) {
   const r = { code: "", name: "", wage: "", unit: "" };
   for (const raw of cells) {
@@ -1112,7 +1112,7 @@ function rowsFromTables(tables) {
 }
 // 卡片：姓名、部門（新莊中平店）、職稱「門市人員(早班時薪)」、分機、Email
 function rowsFromApolloCards(text) {
-  const L = String(text || "").split("\n").map(x => x.trim()).filter(Boolean);
+  const L = String(text || "").split("\n").map(x => x.trim()).filter(x => x && !/@|…$/.test(x));
   const out = [], seen = new Set();
   L.forEach((l, i) => {
     if (!/(時薪|月薪|門市人員|專員|主任|店長|督導)/.test(l) || l.length > 30) return;
@@ -1131,6 +1131,9 @@ function rowsFromApolloCards(text) {
 }
 function openApolloImport(p) {
   if (p.from === location.host) return openModal(`<h2>要在 Apollo 頁面點小書籤</h2><div class="sub">剛剛是在排班網站上點的，請切到 Apollo「我的部屬」那一頁再點。</div><div class="actions"><span class="spacer"></span><button class="btn primary" onclick="document.getElementById('modalRoot').innerHTML=''">知道了</button></div>`);
+  if (!Array.isArray(p.people) && p.v !== 3) return openModal(`<h2>請換新版的小書籤</h2><div class="sub">你點的是<b>舊版</b>小書籤，讀不到工號，也沒有排除有人店。</div>
+    <ol class="small" style="padding-left:20px;line-height:1.8"><li>在書籤列對「📥 Apollo→排班」按右鍵 → <b>刪除</b>。</li><li>到「人員」→「從 Apollo「我的部屬」匯入…」，把新的按鈕拖到書籤列。</li><li>回 Apollo「我的部屬」點新書籤，右上角會出現藍框，照框裡的說明操作。</li></ol>
+    <div class="actions"><span class="spacer"></span><button class="btn primary" onclick="document.getElementById('modalRoot').innerHTML=''">知道了</button></div>`);
   let rows = [], left = [];
   if (Array.isArray(p.people)) {
     for (const x of p.people) {
