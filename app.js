@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v34";
+const APP_VER = "v35";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -92,6 +92,17 @@ function km(a, b) {
 }
 
 /* ================= 啟動 ================= */
+// 自動更新：GitHub Pages 會快取網頁約 10 分鐘，打開時檢查 version.json，有新版就換網址重新載入（換網址才不會拿到快取）
+(async () => {
+  try {
+    const j = await (await fetch("version.json?t=" + Date.now(), { cache: "no-store" })).json();
+    const k = "zq-upd-" + j.v;
+    if (j.v && j.v !== APP_VER && !sessionStorage.getItem(k)) {
+      sessionStorage.setItem(k, "1");
+      location.replace(location.pathname + "?u=" + j.v + location.hash);
+    }
+  } catch {}
+})();
 grabApollo();
 init();
 async function init() {
