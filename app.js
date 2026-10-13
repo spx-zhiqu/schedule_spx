@@ -6,11 +6,11 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v30";
+const APP_VER = "v31";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
-const DEFAULT_RULES = { capAm: 0, capPm: 0, maxStores: 0, maxKm: 0, maxDays: 5, maxConsec: 6 };
+const DEFAULT_RULES = { capAm: 0, capPm: 0, maxStores: 2, maxKm: 0, maxDays: 5, maxConsec: 6 };
 const S = {
   store: null, user: undefined, regions: undefined, rid: null, reg: null,
   master: undefined, emps: undefined, leaveCfg: null,
@@ -43,7 +43,8 @@ const P = (...x) => `regions/${S.rid}/` + x.join("/");
 const isOwner = () => !!S.user && S.user.email === S.store.owner;
 const isAdmin = () => isOwner() || (!!S.user && (S.reg?.admins || []).includes(S.user.email));
 const M = () => S.master || { hubs: [], stores: [], rules: DEFAULT_RULES };
-const rules = () => ({ ...DEFAULT_RULES, ...(M().rules || {}) });
+// 每人每班最多 2 家店（沒填或填 0 也當 2）
+const rules = () => { const r = { ...DEFAULT_RULES, ...(M().rules || {}) }; if (!(+r.maxStores > 0)) r.maxStores = 2; return r; };
 const hubs = () => M().hubs || [];
 const hubBy = id => hubs().find(h => h.id === id);
 const stores = () => M().stores || [];
@@ -320,7 +321,7 @@ function gridHtml() {
     ${missRow(days, cell)}</thead>
     <tbody>${personRows(list, days, cell) || `<tr><td class="sticky" style="padding:20px" colspan="${days.length + 2}">這間主要門市還沒有人員，請到「人員」新增或從 Apollo 匯入。</td></tr>`}</tbody>
   </table></div>
-  <div class="legend" style="margin-top:8px"><span><i style="background:#fff7e0;border-left:4px solid #f59e0b"></i>☀️ 早班</span><span><i style="background:#ecebff;border-left:4px solid #6366f1"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
+  <div class="legend" style="margin-top:8px"><span><i style="background:#e0f2fe;border-left:4px solid #0284c7"></i>☀️ 早班</span><span><i style="background:#ede9fe;border-left:4px solid #7c3aed"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
 }
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
@@ -450,7 +451,12 @@ function autoPlan() {
       const pool = people.filter(e => !e.shift || e.shift === "any" || e.shift === sh);
       const slots = pool.reduce((n, e) => n + (+e.maxDays || r.maxDays) / 7 * (e.shift === sh ? 1 : 0.5), 0);
       const target = Math.max(1, Math.min(cand.length, Math.round(slots)));
-      const routes = buildRoutes(need, sh, target);
+      let routes = buildRoutes(need, sh, target);
+      // 人手不夠時，把這週剩下的上班天數平均攤到剩下的每一天（避免平日排滿、週末全空）
+      const wd = (fromDs(ds).getDay() + 6) % 7, daysLeft = 7 - wd;
+      const left = pool.reduce((n, e) => n + Math.max(0, (+e.maxDays || r.maxDays) - daysInWeek(e.id, ds)) * (e.shift === sh ? 1 : 0.5), 0);
+      const quota = Math.max(1, Math.ceil(left / daysLeft - 1e-9));
+      if (routes.length > quota) routes = routes.slice(0, quota);
       for (const rt of routes) {
         const ids = rt.stores.map(s => s.id);
         let best = null, bs = -Infinity;
@@ -604,7 +610,7 @@ function settingsHtml() {
       <div class="rules">
         ${num("maxDays", "每人每週最多上幾天", "人員那邊可以個別設定")}
         ${num("maxConsec", "最多連續上幾天", "")}
-        ${num("maxStores", "每人每班最多負責幾家店", "")}
+        ${num("maxStores", "每人每班最多負責幾家店", "預設 2 家")}
         ${num("capAm", "早班每人工作量上限", "門市工作量加總不超過這個數")}
         ${num("capPm", "晚班每人工作量上限", "")}
         ${num("maxKm", "同一人負責的店最遠相距幾公里", "門市要先定位")}
