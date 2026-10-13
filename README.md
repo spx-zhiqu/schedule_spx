@@ -1,6 +1,6 @@
 # 智取店排班系統 v2（GitHub Pages + Firebase）
 
-網站：https://tinaho8891.github.io/zhiqu-schedule/
+網站：https://spx-zhiqu.github.io/schedule_spx/
 員工畫休：在網站「畫休」分頁複製網址（`leave.html?r=區域代碼`）
 
 ## 架構
