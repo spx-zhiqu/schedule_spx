@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v32";
+const APP_VER = "v33";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -512,6 +512,7 @@ function peopleHtml() {
       <button class="btn primary" data-act="apolloHelp">從 Apollo「我的部屬」匯入…</button>
       <button class="btn" data-act="empPaste">批次貼上名單…</button>
       <span class="spacer"></span>
+      <button class="btn small danger" data-act="empClear">清空全部人員…</button>
       <label class="small"><input type="checkbox" data-ch="showAll" ${S.showAllEmps ? "checked" : ""}> 顯示全區域人員（${act.length} 人）</label>
     </div>
     <div class="row" style="margin-bottom:10px">
@@ -697,6 +698,11 @@ const ACT = {
     saveEmps([...emps(), { id: uid("e"), name, code, hubs: [S.hub], shift: "any", active: true }]); toast("已新增 " + name);
   },
   eDel: el => { const e = empBy(el.dataset.id); if (confirm(`刪除「${e.name}」？只是離職的話，建議取消「啟用」就好。`)) saveEmps(emps().filter(x => x.id !== e.id)); },
+  empClear: () => {
+    const n = emps().length; if (!n) return toast("目前沒有人員");
+    const t = prompt(`會刪除這個區域全部 ${n} 位人員（班表格子不會刪，但人員刪掉後不會再顯示）。\n確定的話請輸入「清空」：`);
+    if (t === "清空") { saveEmps([]); toast(`已清空 ${n} 位人員`); }
+  },
   eStores: el => openEmpStores(el.dataset.id),
   eHubs: el => openEmpHubs(el.dataset.id),
   apolloHelp: () => openApolloHelp(),
