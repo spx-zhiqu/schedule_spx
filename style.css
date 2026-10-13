@@ -294,3 +294,20 @@ table.sg{font-size:14px}
 .sg tr.grp-pm td.sticky{color:#6d28d9}
 .missbtn{font-size:14px}
 .sg td.c.chg:not(.s-am):not(.s-pm):not(.s-off){background:#fff}
+
+/* ===== 可支援門市 ===== */
+table.sup{border-collapse:separate;border-spacing:0;font-size:14px;background:#fff}
+.sup th,.sup td{border-bottom:1px solid var(--line2);border-right:1px solid var(--line2);padding:0}
+.sup thead th{position:sticky;top:0;z-index:3;background:#fff7f5;color:#7c2d12;font-weight:700}
+.sup thead tr:nth-child(2) th{top:34px}
+.sup th.hubh{height:34px;font-size:15px;background:#fde8e2}
+.sup th.vt{height:110px;min-width:34px;vertical-align:bottom;padding:6px 0}
+.sup th.vt span{writing-mode:vertical-rl;text-orientation:upright;letter-spacing:1px;font-size:14px}
+.sup .sticky{position:sticky;left:0;z-index:2;background:#fff;padding:0 8px;white-space:nowrap;width:72px;min-width:72px;max-width:72px;overflow:hidden;font-weight:600}
+.sup .sticky2{position:sticky;left:72px;z-index:2;background:#fff;padding:4px 10px;white-space:nowrap;min-width:150px;text-align:left}
+.sup thead .sticky,.sup thead .sticky2{z-index:4;background:#fff7f5}
+.sup td.ck2{text-align:center;height:36px;min-width:34px}
+.sup td.ck2.own{background:#fff4ef}
+.sup td.ck2 input{width:18px;height:18px;accent-color:#e4572e;cursor:pointer}
+.sup tbody tr:hover td{background:#f8fafc}
+.okpill.small{font-size:12px;padding:1px 8px}

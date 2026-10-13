@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v33";
+const APP_VER = "v34";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -57,6 +57,9 @@ const empBy = id => emps().find(e => e.id === id);
 const eHubs = e => Array.isArray(e?.hubs) ? e.hubs.filter(h => hubBy(h)) : e?.hub && hubBy(e.hub) ? [e.hub] : [];
 const hubNames = e => eHubs(e).map(h => hubBy(h).name).join("、");
 const empsOf = hub => emps().filter(e => eHubs(e).includes(hub));
+// 可以去的門市：有勾「可支援門市」就照勾的；沒勾＝自己主要門市底下全部
+const allowed = e => (e.stores || []).length ? e.stores.filter(id => storeBy(id)) : eHubs(e).flatMap(h => storesOf(h).map(s => s.id));
+const canGo = (e, id) => allowed(e).includes(id);
 const cell = (ds, eid) => (S.months[ymOf(ds)] || {})[ds + "_" + eid] || null;
 // 每家店早晚都要排；只有標成「不排」的店（例：撤店）例外
 const isOff = s => s.off === true || (s.needAm === false && s.needPm === false);
@@ -173,7 +176,7 @@ const monthsReady = list => [...list].every(ym => S.months[ym]);
 function setTab(t) { S.tab = t; ls.set("zq2-tab", t); render(); }
 
 /* ================= 畫面 ================= */
-const TABS = [["overview", "漏排總覽"], ["grid", "班表"], ["auto", "自動排班", 1], ["people", "人員", 1], ["stores", "門市", 1], ["leave", "畫休", 1], ["settings", "設定", 1]];
+const TABS = [["overview", "漏排總覽"], ["grid", "班表"], ["auto", "自動排班", 1], ["people", "人員", 1], ["support", "可支援門市", 1], ["stores", "門市", 1], ["leave", "畫休", 1], ["settings", "設定", 1]];
 function render() {
   if (S.renderQueued) return;
   S.renderQueued = true;
@@ -193,7 +196,7 @@ function renderNow() {
   if (S.apolloPending && admin) setTimeout(runApolloPending);
   if (!hubs().length && S.tab !== "settings") return html(admin ? firstHubHtml() : `<div class="card login"><h2>這個區域還沒有設定主要門市</h2><p class="muted">請主管先到「設定」新增主要門市。</p></div>`);
   const keep = keepScroll();
-  const v = { overview: overviewHtml, grid: gridHtml, auto: autoHtml, people: peopleHtml, stores: storesHtml, leave: leaveHtml, settings: settingsHtml }[S.tab] || overviewHtml;
+  const v = { overview: overviewHtml, grid: gridHtml, auto: autoHtml, people: peopleHtml, support: supportHtml, stores: storesHtml, leave: leaveHtml, settings: settingsHtml }[S.tab] || overviewHtml;
   html(v());
   keep();
 }
@@ -420,8 +423,12 @@ function buildRoutes(list, sh, people) {
 function autoPlan() {
   const r = rules(), start = S.autoStart, n = S.autoDays, keep = S.autoKeep !== false;
   const days = range(start, n).map(d => d.ds);
-  const people = empsOf(S.hub).filter(e => e.active !== false);
   const hubStores = storesOf(S.hub);
+  const members = empsOf(S.hub).filter(e => e.active !== false);
+  // 別間主要門市、但在「可支援門市」勾了這裡門市的人，也可以來支援
+  const helpers = emps().filter(e => e.active !== false && !members.includes(e) && (e.stores || []).some(id => hubStores.some(s => s.id === id)));
+  const people = [...members, ...helpers];
+  const isHelper = new Set(helpers.map(e => e.id));
   const plan = {}, notes = [];
   const get = (ds, eid) => plan[ds + "_" + eid] !== undefined ? plan[ds + "_" + eid] : cell(ds, eid);
   const working = c => c && c.s && c.s !== "off";
@@ -449,12 +456,13 @@ function autoPlan() {
       });
       // 一天要用幾個人：讓大家的上班天數平均攤在一週 7 天（早晚都可的人兩班各算一半）
       const pool = people.filter(e => !e.shift || e.shift === "any" || e.shift === sh);
-      const slots = pool.reduce((n, e) => n + (+e.maxDays || r.maxDays) / 7 * (e.shift === sh ? 1 : 0.5), 0);
+      const wt = e => (e.shift === sh ? 1 : 0.5) * (isHelper.has(e.id) ? 0.5 : 1);
+      const slots = pool.reduce((n, e) => n + (+e.maxDays || r.maxDays) / 7 * wt(e), 0);
       const target = Math.max(1, Math.min(cand.length, Math.round(slots)));
       let routes = buildRoutes(need, sh, target);
       // 人手不夠時，把這週剩下的上班天數平均攤到剩下的每一天（避免平日排滿、週末全空）
       const wd = (fromDs(ds).getDay() + 6) % 7, daysLeft = 7 - wd;
-      const left = pool.reduce((n, e) => n + Math.max(0, (+e.maxDays || r.maxDays) - daysInWeek(e.id, ds)) * (e.shift === sh ? 1 : 0.5), 0);
+      const left = pool.reduce((n, e) => n + Math.max(0, (+e.maxDays || r.maxDays) - daysInWeek(e.id, ds)) * wt(e), 0);
       const quota = Math.max(1, Math.ceil(left / daysLeft - 1e-9));
       if (routes.length > quota) routes = routes.slice(0, quota);
       for (const rt of routes) {
@@ -462,9 +470,9 @@ function autoPlan() {
         let best = null, bs = -Infinity;
         for (const e of cand) {
           if (used.has(e.id)) continue;
-          if ((e.stores || []).length && !ids.every(id => e.stores.includes(id))) continue;
+          if (!ids.every(id => canGo(e, id))) continue;
           const last = lastStores(e.id, ds, sh);
-          const score = -10 * daysInWeek(e.id, ds) + 4 * ids.filter(id => last.includes(id)).length + (e.shift === sh ? 3 : 0) - 0.5 * streak(e.id, ds) + Math.random() * 0.1;
+          const score = -10 * daysInWeek(e.id, ds) + 4 * ids.filter(id => last.includes(id)).length + (e.shift === sh ? 3 : 0) - (isHelper.has(e.id) ? 6 : 0) - 0.5 * streak(e.id, ds) + Math.random() * 0.1;
           if (score > bs) { bs = score; best = e; }
         }
         if (!best) continue;
@@ -473,9 +481,9 @@ function autoPlan() {
       }
     }
     // 沒排到班的人標「休」（保留模式下不動原本的格子；有多間主要門市的人留空，讓別間還能排）
-    for (const e of people) if (!get(ds, e.id) && eHubs(e).length <= 1) plan[ds + "_" + e.id] = { s: "off", st: [] };
+    for (const e of members) if (!get(ds, e.id) && eHubs(e).length <= 1) plan[ds + "_" + e.id] = { s: "off", st: [] };
   }
-  if (!people.length) notes.push("這間主要門市沒有啟用中的人員");
+  if (!members.length) notes.push("這間主要門市沒有啟用中的人員");
   if (!hubStores.length) notes.push("這間主要門市沒有門市");
   return { hub: S.hub, start, days: n, cells: plan, notes };
 }
@@ -521,6 +529,32 @@ function peopleHtml() {
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>姓名</th><th>工號</th><th>主要門市</th><th>班別</th><th>每週最多天</th><th>可去門市</th><th>啟用</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有人員</td></tr>`}</table></div>
     <p class="muted small">「主要門市」可以選不只一間，這個人會出現在每一間的排班裡。離職的人取消「啟用」就好，歷史班表會保留。「可去門市」不限＝主要門市底下每一家都可以排。</p></div>`;
+}
+
+/* ---------- 可支援門市（人員 × 門市） ---------- */
+function supportHtml() {
+  const ph = S.supPeople ?? S.hub, sh = S.supStores ?? "";
+  const people = emps().filter(e => e.active !== false && (ph === "" ? true : ph === "none" ? !eHubs(e).length : eHubs(e).includes(ph)));
+  const shownHubs = hubs().filter(h => !sh || h.id === sh).map(h => [h, storesOf(h.id).filter(needs)]).filter(([, l]) => l.length);
+  const cols = shownHubs.flatMap(([, l]) => l);
+  const hubOpt = (sel, all) => `<option value="">${all}</option>` + hubs().map(h => `<option value="${h.id}" ${h.id === sel ? "selected" : ""}>${esc(h.name)}</option>`).join("");
+  const shiftTxt = { am: "早班", pm: "晚班" };
+  const rows = people.map(e => {
+    const al = new Set(allowed(e)), custom = (e.stores || []).length > 0;
+    return `<tr><td class="sticky nm">${esc(e.name)}</td><td class="sticky2"><span class="muted small">${esc(hubNames(e) || "未設定")}／${shiftTxt[e.shift] || "早晚"}</span>
+      ${custom ? `<button class="btn small" data-act="supReset" data-id="${e.id}" title="恢復成只去自己主要門市底下的門市">本區</button>` : `<span class="okpill small" title="沒有另外設定＝自己主要門市底下全部">本區</span>`}</td>
+      ${cols.map(s => `<td class="ck2 ${eHubs(e).includes(s.hub) ? "own" : ""}"><input type="checkbox" data-ch="sup" data-e="${e.id}" data-s="${s.id}" ${al.has(s.id) ? "checked" : ""}></td>`).join("")}</tr>`;
+  }).join("");
+  return `<div class="card"><div class="row">
+      <label>人員主要門市 <select data-ch="supPeople"><option value="" ${ph === "" ? "selected" : ""}>全部</option>${hubs().map(h => `<option value="${h.id}" ${h.id === ph ? "selected" : ""}>${esc(h.name)}</option>`).join("")}<option value="none" ${ph === "none" ? "selected" : ""}>未設定</option></select></label>
+      <label>顯示門市 <select data-ch="supStores">${hubOpt(sh, "全部主要門市")}</select></label>
+      <button class="btn" data-act="supAllOwn">篩選中的人員全部恢復「本區」</button>
+      <span class="muted small">勾選＝這個人可以排到這家店。沒另外勾過的人＝自己主要門市底下全部（標「本區」）。勾到別間主要門市的店，自動排班時就能去支援。</span>
+    </div></div>
+    ${!people.length ? `<div class="card muted">沒有符合的人員</div>` : `<div class="scroll"><table class="sup">
+      <thead><tr><th class="sticky nm" rowspan="2">姓名</th><th class="sticky2" rowspan="2">主要門市／班別</th>${shownHubs.map(([h, l]) => `<th colspan="${l.length}" class="hubh">${esc(h.name)}</th>`).join("")}</tr>
+        <tr>${cols.map(s => `<th class="vt"><span>${esc(s.name)}</span></th>`).join("")}</tr></thead>
+      <tbody>${rows}</tbody></table></div>`}`;
 }
 
 /* ---------- 門市 ---------- */
@@ -704,6 +738,13 @@ const ACT = {
     if (t === "清空") { saveEmps([]); toast(`已清空 ${n} 位人員`); }
   },
   eStores: el => openEmpStores(el.dataset.id),
+  supReset: el => patchEmp(el.dataset.id, { stores: [] }),
+  supAllOwn: () => {
+    const ph = S.supPeople ?? S.hub;
+    const ids = new Set(emps().filter(e => ph === "" ? true : ph === "none" ? !eHubs(e).length : eHubs(e).includes(ph)).map(e => e.id));
+    if (!confirm(`把篩選中的 ${ids.size} 人都恢復成「本區」（只去自己主要門市底下的門市）？`)) return;
+    saveEmps(emps().map(e => ids.has(e.id) ? { ...e, stores: [] } : e));
+  },
   eHubs: el => openEmpHubs(el.dataset.id),
   apolloHelp: () => openApolloHelp(),
   empPaste: () => openEmpPaste(),
@@ -742,6 +783,15 @@ const CH = {
   eAct: t => patchEmp(t.dataset.id, { active: t.checked }),
   lvYm: t => { if (t.value) { S.leaveYm = t.value; render(); } },
   storeFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreFile(f); },
+  supPeople: t => { S.supPeople = t.value; render(); },
+  supStores: t => { S.supStores = t.value; render(); },
+  sup: t => {
+    const e = empBy(t.dataset.e), set = new Set(allowed(e));
+    t.checked ? set.add(t.dataset.s) : set.delete(t.dataset.s);
+    const own = new Set(eHubs(e).flatMap(h => storesOf(h).map(s => s.id)));
+    const same = set.size === own.size && [...set].every(id => own.has(id));
+    patchEmp(e.id, { stores: same ? [] : stores().map(s => s.id).filter(id => set.has(id)) });
+  },
   restore: t => { const f = t.files[0]; t.value = ""; if (f) restore(f); },
 };
 function onClick(e) {
