@@ -921,13 +921,15 @@ function rowFromCells(cells) {
   for (const raw of cells) {
     const c = String(raw ?? "").trim(); if (!c) continue;
     if (CODE_RE.test(c) && !r.code && c.length <= 12) r.code = c.match(CODE_RE)[1].toUpperCase();
-    else if (/時薪|月薪/.test(c)) r.wage = (c.match(/(早班|晚班|假日|跑點)時薪|月薪/) || [c])[0];
+    else if (/時薪|月薪/.test(c)) r.wage = (c.match(/(假日)?(早班|晚班|跑點)?時薪|月薪/) || [c])[0];
     else if (/店|部|組|課|處/.test(c) && c.length > 2 && !r.unit && !NAME_RE.test(c.replace(/店$/, "店X"))) r.unit = c;
     else if (/^\d+$/.test(c) || /@/.test(c)) { /* 公司代碼、Email 略過 */ }
     else if (!r.name && NAME_RE.test(c)) r.name = c;
   }
   return r;
 }
+// 部門名稱含母店名（例：新莊公園 - 智取店 → 公園店）就放到那家母店
+const hubFromDept = d => { const t = String(d || ""); return [...hubs()].sort((a, b) => b.name.length - a.name.length).find(h => { const k = h.name.replace(/[店組]$/, ""); return k.length >= 2 && t.includes(k); })?.id || ""; };
 const shiftOfWage = w => /早/.test(w || "") ? "am" : /晚/.test(w || "") ? "pm" : "any";
 function planRows(rows) {
   const add = [], upd = [], skip = [];
@@ -951,18 +953,18 @@ async function applyRows(rows, hub, syncActive) {
     const r = hit[1];
     return { ...e, ...(syncActive ? { active: true } : {}), code: r.code || e.code || "", wage: r.wage || e.wage || "", unit: r.unit || e.unit || "", hub: e.hub || hub };
   });
-  for (const r of add) list.push({ id: uid("e"), name: r.name, code: r.code || "", wage: r.wage || "", unit: r.unit || "", hub, shift: shiftOfWage(r.wage), active: true });
+  for (const r of add) list.push({ id: uid("e"), name: r.name, code: r.code || "", wage: r.wage || "", unit: r.unit || "", hub: hubFromDept(r.unit) || hub, shift: shiftOfWage(r.wage), active: true });
   await saveEmps(list);
   closeModal(); toast(`已更新 ${upd.length} 人、新增 ${add.length} 人${off ? `、停用 ${off} 人` : ""}`);
 }
 function importModal(title, sub, rows) {
   const hubOpts = hubs().map(h => `<option value="${h.id}" ${h.id === S.hub ? "selected" : ""}>${esc(h.name)}</option>`).join("");
   const { add, upd, skip } = planRows(rows);
-  const tag = r => { const u = upd.find(([, x]) => x === r); return u ? `<span class="muted">已有（${esc(hubBy(u[0].hub)?.name || "未分母店")}）</span>` : `<span style="color:var(--ok)">新增</span>`; };
+  const tag = r => { const u = upd.find(([, x]) => x === r); if (u) return `<span class="muted">已有（${esc(hubBy(u[0].hub)?.name || "未分母店")}）</span>`; const h = hubFromDept(r.unit); return `<span style="color:var(--ok)">新增${h ? "→" + esc(hubBy(h).name) : ""}</span>`; };
   const m = openModal(`<h2>${title}</h2><div class="sub">${sub}</div>
     <div class="scrollx" style="max-height:300px;overflow:auto"><table class="list"><tr><th>#</th><th>姓名</th><th>工號</th><th>部門</th><th>時薪類別</th><th></th></tr>
       ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${esc(r.code) || '<span class="muted">—</span>'}</td><td>${esc(r.unit)}</td><td>${esc(r.wage)}</td><td>${tag(r)}</td></tr>`).join("")}</table></div>
-    <div class="row" style="margin-top:10px"><label>新增的人放到母店 <select id="imHub">${hubOpts}</select></label></div>
+    <div class="row" style="margin-top:10px"><label>部門認不出母店的新人放到 <select id="imHub">${hubOpts}</select></label></div>
     <label class="small" style="display:block;margin-top:6px"><input type="checkbox" id="imSync"> 同步在職狀態：這家母店裡、名單上<b>沒有</b>的人設為停用</label>
     <div class="small muted" style="margin-top:8px">更新 ${upd.length} 人、新增 ${add.length} 人${skip.length ? `、<span style="color:var(--warn)">${skip.length} 筆同名要手動處理：${skip.map(esc).join("、")}</span>` : ""}。已經在系統裡的人只補工號和時薪類別，主要門市不會變。</div>
     <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">直接匯入</button></div>`);
@@ -1016,18 +1018,35 @@ function runApolloPending() {
 }
 function apolloBookmarklet() {
   const site = siteBase();
-  // 讀畫面文字＋表格；另外收集頁面上 JSON 資料裡的「姓名＋工號」配對（卡片上沒顯示工號時用）
-  const code = `(function(){var S=${JSON.stringify(site)};if(S.indexOf(location.host+'/')>=0){alert('請到 Apollo「我的部屬」頁面再點這個書籤。');return}function D(d){var a=[d];try{d.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)a=a.concat(D(f.contentDocument))}catch(e){}})}catch(e){}return a}var T=[],ds=D(document);ds.forEach(function(d){d.querySelectorAll('table').forEach(function(t){var R=[];t.querySelectorAll('tr').forEach(function(r){var c=[].map.call(r.querySelectorAll('th,td'),function(x){return (x.innerText||'').trim()});if(c.some(Boolean))R.push(c)});if(R.length)T.push(R)})});var X=ds.map(function(d){return d.body?d.body.innerText:''}).join('\\n');var A=[];ds.forEach(function(d){[].forEach.call(d.querySelectorAll('[title],[alt],[data-id],[data-empno]'),function(x){var t=(x.getAttribute('title')||'')+' '+(x.getAttribute('alt')||'')+' '+(x.getAttribute('data-empno')||'');if(/[A-Z]{1,3}\\d{4,}/.test(t))A.push(t.trim())})});var p={v:2,from:location.host,tables:T,text:X.slice(0,90000),attrs:A.slice(0,800)};var w=window.open(S+'#apollo='+encodeURIComponent(JSON.stringify(p)),'_blank');if(!w)alert('瀏覽器擋住了新分頁，請允許彈出視窗後再點一次。')})()`;
+  // 點一下：在 Apollo 頁面右上角出現小框，並開始記錄這個頁面「自己」載入的部屬名單（含工號）。
+  // 只留下姓名、工號、部門、職稱、是否離職；按「送到排班網站」才會帶走。不讀任何登入資訊。
+  const code = `(function(){var S=${JSON.stringify(site)};if(S.indexOf(location.host+'/')>=0){alert('請到 Apollo「我的部屬」頁面再點這個書籤。');return}
+if(window.__zq){window.__zq.box.style.display='block';return}
+var got={},Z=window.__zq={};
+function take(t){try{var j=JSON.parse(t),d=j&&j.Data;if(!Array.isArray(d)||!d.length||d[0].EmployeeName===undefined)return;d.forEach(function(x){got[x.EmployeeNumber||x.EmployeeName]={name:x.EmployeeName||'',code:x.EmployeeNumber||'',dept:x.DeptName||'',title:x.JobTitle||'',leave:!!x.IsLeave}});upd()}catch(e){}}
+var of=window.fetch;if(of)window.fetch=function(){return of.apply(this,arguments).then(function(r){try{r.clone().text().then(take)}catch(e){}return r})};
+var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){this.addEventListener('load',function(){try{if(!this.responseType||this.responseType==='text')take(this.responseText);else if(this.responseType==='json')take(JSON.stringify(this.response))}catch(e){}});return os.apply(this,arguments)};
+var b=Z.box=document.createElement('div');b.style.cssText='position:fixed;top:12px;right:12px;z-index:2147483647;background:#fff;border:2px solid #2563eb;border-radius:12px;padding:14px 16px;width:300px;font:14px/1.6 sans-serif;color:#1f2937;box-shadow:0 8px 30px rgba(0,0,0,.25)';
+b.innerHTML='<b style="font-size:15px">📥 匯入排班網站</b><div id="zqm" style="margin:6px 0 10px">請<b>勾一下（或取消）「含轄下」</b>，讓名單重新載入一次。</div><button id="zqg" disabled style="background:#2563eb;color:#fff;border:0;border-radius:8px;padding:6px 12px;opacity:.5">送到排班網站</button> <button id="zqt" style="border:1px solid #ccc;background:#fff;border-radius:8px;padding:6px 10px">只用畫面文字</button> <a href="#" id="zqx" style="float:right;color:#888">關閉</a>';
+document.body.appendChild(b);
+function upd(){var n=Object.keys(got).length;b.querySelector('#zqm').innerHTML='已讀到 <b>'+n+'</b> 人（含工號）。<br>名單如果要往下捲才會載入更多，捲到底再按送出。';var g=b.querySelector('#zqg');g.disabled=false;g.style.opacity=1}
+function send(p){var w=window.open(S+'#apollo='+encodeURIComponent(JSON.stringify(p)),'_blank');if(!w)alert('瀏覽器擋住了新分頁，請允許彈出視窗後再按一次。')}
+b.querySelector('#zqg').onclick=function(){var l=[];for(var k in got)l.push(got[k]);send({v:3,from:location.host,people:l})};
+b.querySelector('#zqt').onclick=function(){send({v:3,from:location.host,text:(document.body.innerText||'').slice(0,90000)})};
+b.querySelector('#zqx').onclick=function(e){e.preventDefault();b.style.display='none'};
+})()`.replace(/\n/g, "");
   return "javascript:" + encodeURIComponent(code);
 }
 function openApolloHelp() {
   const m = openModal(`<h2>從 Apollo「我的部屬」匯入人員</h2>
     <div class="sub">第一次要先把小書籤放到書籤列（只要做一次），之後每次更新名單只要兩步。</div>
-    <p><b>第一次設定：</b>把下面這顆按鈕<b>用滑鼠拖到瀏覽器上方的書籤列</b>。<br><span class="small muted">看不到書籤列：Mac 按 ⌘+Shift+B、Windows 按 Ctrl+Shift+B。舊版的小書籤也能用，但新版多讀工號，建議重拖一次。</span></p>
+    <p><b>第一次設定：</b>把下面這顆按鈕<b>用滑鼠拖到瀏覽器上方的書籤列</b>。<br><span class="small muted">看不到書籤列：Mac 按 ⌘+Shift+B、Windows 按 Ctrl+Shift+B。<b>以前拖過的舊書籤請刪掉、重拖這一顆</b>（新版才讀得到工號）。</span></p>
     <p style="text-align:center;margin:14px 0"><a class="btn primary" id="apolloBm" href="${esc(apolloBookmarklet())}" draggable="true">📥 Apollo→排班</a></p>
     <ol class="small" style="padding-left:20px;line-height:1.8">
-      <li>登入 Apollo，打開「我的部屬」，勾「含轄下」，等卡片都出現。</li>
-      <li>在 <b>Apollo 那一頁</b>點書籤列的「📥 Apollo→排班」→ 自動開回排班網站顯示預覽 → 按「直接匯入」。</li></ol>
+      <li>登入 Apollo，打開「我的部屬」。</li>
+      <li>在 <b>Apollo 那一頁</b>點書籤列的「📥 Apollo→排班」，右上角會出現小框。</li>
+      <li>照小框說的<b>勾一下（或取消）「含轄下」</b>，小框顯示「已讀到 N 人」後按「送到排班網站」→ 預覽 → 「直接匯入」。</li></ol>
+    <p class="small muted">小書籤只記下名單上的姓名、工號、部門、職稱，不會讀取或傳送你的 Apollo 帳號密碼。</p>
     <div class="actions"><span class="spacer"></span><button class="btn" data-x="close">關閉</button></div>`);
   m.querySelector("#apolloBm").onclick = e => { e.preventDefault(); toast("請把這顆按鈕拖到書籤列，不是在這裡點"); };
   m.querySelector("[data-x=close]").onclick = closeModal;
@@ -1069,17 +1088,26 @@ function rowsFromApolloCards(text) {
     if (!name || seen.has(name + unit)) return;
     seen.add(name + unit);
     if (!code) { const after = L.slice(i + 1, i + 4).join(" ").match(CODE_RE); if (after) code = after[1].toUpperCase(); }
-    out.push({ code, name, wage: (l.match(/(早班|晚班|假日|跑點)時薪|月薪/) || [""])[0], unit });
+    out.push({ code, name, wage: (l.match(/(假日)?(早班|晚班|跑點)?時薪|月薪/) || [""])[0], unit });
   });
   return out;
 }
 function openApolloImport(p) {
   if (p.from === location.host) return openModal(`<h2>要在 Apollo 頁面點小書籤</h2><div class="sub">剛剛是在排班網站上點的，請切到 Apollo「我的部屬」那一頁再點。</div><div class="actions"><span class="spacer"></span><button class="btn primary" onclick="document.getElementById('modalRoot').innerHTML=''">知道了</button></div>`);
-  let rows = rowsFromTables(p.tables || []);
-  const cards = rowsFromApolloCards(p.text); if (cards.length > rows.length) rows = cards;
+  let rows = [], left = [];
+  if (Array.isArray(p.people)) {
+    for (const x of p.people) {
+      const r = { name: String(x.name || "").trim(), code: String(x.code || "").trim().toUpperCase(), unit: String(x.dept || "").trim(), wage: (String(x.title || "").match(/(假日)?(早班|晚班|跑點)?時薪|月薪/) || [""])[0] };
+      if (!r.name) continue;
+      if (x.leave) left.push(r.name); else rows.push(r);
+    }
+  } else {
+    rows = rowsFromTables(p.tables || []);
+    const cards = rowsFromApolloCards(p.text); if (cards.length > rows.length) rows = cards;
+  }
   // 頁面屬性裡的「工號 姓名」配對，補到沒有工號的人身上
   for (const a of p.attrs || []) { const cm = a.match(CODE_RE); if (!cm) continue; const nm = a.replace(cm[0], "").replace(/[()（）\s\-]/g, ""); const r = rows.find(x => x.name === nm && !x.code); if (r) r.code = cm[1].toUpperCase(); }
   if (!rows.length) return openModal(`<h2>Apollo 名單讀不到</h2><div class="sub">小書籤有執行，但畫面上找不到人員名單。請確認「我的部屬」的卡片已經顯示出來再點一次；還是不行的話，把畫面截圖給 Claude。</div><div class="actions"><span class="spacer"></span><button class="btn primary" onclick="document.getElementById('modalRoot').innerHTML=''">知道了</button></div>`);
   const noCode = rows.filter(r => !r.code).length;
-  importModal("從 Apollo 匯入人員", `讀到 ${rows.length} 人${noCode ? `（${noCode} 人頁面上沒有工號，匯入後可以在人員表手動補）` : ""}。`, rows);
+  importModal("從 Apollo 匯入人員", `讀到 ${rows.length} 人${noCode ? `（${noCode} 人沒有工號，匯入後可以在人員表手動補）` : "，都有工號"}。${left.length ? `<br>另有 ${left.length} 人在 Apollo 標示為離職／留停，沒有匯入：${left.map(esc).join("、")}` : ""}`, rows);
 }
