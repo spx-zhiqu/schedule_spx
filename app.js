@@ -726,7 +726,7 @@ function openRegionLater(id) { S.pendingRid = id; const t = setInterval(() => { 
 
 /* ================= 存檔 ================= */
 async function saveMaster(patch) {
-  const m = { hubs: hubs(), stores: stores(), rules: rules(), ...patch };
+  const m = { hubs: hubs(), stores: stores(), rules: rules(), importOnly: M().importOnly ?? "智取店", ...patch };
   try { await S.store.set(P("cfg", "master"), m); } catch (e) { toast("儲存失敗：" + e.message); }
 }
 const patchStore = (id, patch) => saveMaster({ stores: stores().map(s => s.id === id ? { ...s, ...patch } : s) });
@@ -978,26 +978,42 @@ async function applyRows(rows, hub, syncActive) {
   await saveEmps(list);
   closeModal(); toast(`已更新 ${upd.length} 人、新增 ${add.length} 人${off ? `、停用 ${off} 人` : ""}`);
 }
-function importModal(title, sub, rows) {
-  const hubOpts = hubs().map(h => `<option value="${h.id}" ${h.id === S.hub ? "selected" : ""}>${esc(h.name)}</option>`).join("");
-  const { add, upd, skip } = planRows(rows);
-  const tag = r => { const u = upd.find(([, x]) => x === r); if (u) return `<span class="muted">已有（${esc(hubNames(u[0]) || "未設定主要門市")}）</span>`; const h = hubFromDept(r.unit); return `<span style="color:var(--ok)">新增${h ? "→" + esc(hubBy(h).name) : ""}</span>`; };
-  const m = openModal(`<h2>${title}</h2><div class="sub">${sub}</div>
-    <div class="scrollx" style="max-height:300px;overflow:auto"><table class="list"><tr><th>#</th><th>姓名</th><th>工號</th><th>部門</th><th>時薪類別</th><th></th></tr>
-      ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${esc(r.code) || '<span class="muted">—</span>'}</td><td>${esc(r.unit)}</td><td>${esc(r.wage)}</td><td>${tag(r)}</td></tr>`).join("")}</table></div>
-    <div class="row" style="margin-top:10px"><label>部門認不出主要門市的新人放到 <select id="imHub">${hubOpts}</select></label></div>
-    <label class="small" style="display:block;margin-top:6px"><input type="checkbox" id="imSync"> 同步在職狀態：這間主要門市裡、名單上<b>沒有</b>的人設為停用</label>
-    <div class="small muted" style="margin-top:8px">更新 ${upd.length} 人、新增 ${add.length} 人${skip.length ? `、<span style="color:var(--warn)">${skip.length} 筆同名要手動處理：${skip.map(esc).join("、")}</span>` : ""}。已經在系統裡的人只補工號和時薪類別，主要門市不會變。</div>
-    <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">直接匯入</button></div>`);
-  m.onclick = ev => {
-    const b = ev.target.closest("button"); if (!b) return;
-    if (b.dataset.x === "cancel") return closeModal();
-    if (b.dataset.x === "go") {
-      const hub = m.querySelector("#imHub").value, sync = m.querySelector("#imSync").checked;
-      if (sync) { const keep = new Set(upd.map(([e]) => e.id)); const n = emps().filter(e => eHubs(e).includes(hub) && e.active !== false && !keep.has(e.id)).length; if (n && !confirm(`會把 ${n} 位不在名單上的人設為停用，確定嗎？`)) return; }
-      applyRows(rows, hub, sync);
-    }
+// 只匯入部門含關鍵字的人（預設「智取店」，排除有人店）；關鍵字存在這個區域的設定
+function importModal(title, sub, allRows) {
+  let kw = M().importOnly ?? "智取店";
+  const m = openModal("");
+  const draw = () => {
+    const hubSel = m.querySelector("#imHub")?.value || S.hub;
+    const keepIt = r => !kw || !r.unit || r.unit.includes(kw);
+    const rows = allRows.filter(keepIt), out = allRows.filter(r => !keepIt(r));
+    const outBy = {}; for (const r of out) (outBy[r.unit || "（無部門）"] ||= []).push(r.name);
+    const hubOpts = hubs().map(h => `<option value="${h.id}" ${h.id === hubSel ? "selected" : ""}>${esc(h.name)}</option>`).join("");
+    const { add, upd, skip } = planRows(rows);
+    const tag = r => { const u = upd.find(([, x]) => x === r); if (u) return `<span class="muted">已有（${esc(hubNames(u[0]) || "未設定主要門市")}）</span>`; const h = hubFromDept(r.unit); return `<span style="color:var(--ok)">新增${h ? "→" + esc(hubBy(h).name) : ""}</span>`; };
+    m.innerHTML = `<h2>${title}</h2><div class="sub">${sub}</div>
+      <div class="row" style="margin-bottom:8px"><label class="small">只匯入部門含 <input type="text" id="imKw" value="${esc(kw)}" placeholder="（全部匯入）" style="width:100px"> 的人</label>
+        <span class="small muted">匯入 <b>${rows.length}</b> 人${out.length ? `・排除 <b>${out.length}</b> 人` : ""}</span></div>
+      ${out.length ? `<details class="small" style="margin-bottom:8px"><summary class="muted" style="cursor:pointer">排除的人（${Object.entries(outBy).map(([d, l]) => `${esc(d)} ${l.length}`).join("、")}）</summary>
+        <div class="muted" style="margin-top:4px">${Object.entries(outBy).map(([d, l]) => `<b>${esc(d)}</b>：${l.map(esc).join("、")}`).join("<br>")}</div></details>` : ""}
+      <div class="scrollx" style="max-height:300px;overflow:auto"><table class="list"><tr><th>#</th><th>姓名</th><th>工號</th><th>部門</th><th>時薪類別</th><th></th></tr>
+        ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${esc(r.code) || '<span class="muted">—</span>'}</td><td>${esc(r.unit)}</td><td>${esc(r.wage)}</td><td>${tag(r)}</td></tr>`).join("")}</table></div>
+      <div class="row" style="margin-top:10px"><label>部門認不出主要門市的新人放到 <select id="imHub">${hubOpts}</select></label></div>
+      <label class="small" style="display:block;margin-top:6px"><input type="checkbox" id="imSync"> 同步在職狀態：這間主要門市裡、名單上<b>沒有</b>的人設為停用</label>
+      <div class="small muted" style="margin-top:8px">更新 ${upd.length} 人、新增 ${add.length} 人${skip.length ? `、<span style="color:var(--warn)">${skip.length} 筆同名要手動處理：${skip.map(esc).join("、")}</span>` : ""}。已經在系統裡的人只補工號和時薪類別，主要門市不會變。</div>
+      <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go" ${rows.length ? "" : "disabled"}>直接匯入</button></div>`;
+    m.querySelector("#imKw").onchange = e => { kw = e.target.value.trim(); draw(); };
+    m.onclick = ev => {
+      const b = ev.target.closest("button"); if (!b) return;
+      if (b.dataset.x === "cancel") return closeModal();
+      if (b.dataset.x === "go") {
+        const hub = m.querySelector("#imHub").value, sync = m.querySelector("#imSync").checked;
+        if (sync) { const keep = new Set(upd.map(([e]) => e.id)); const n = emps().filter(e => eHubs(e).includes(hub) && e.active !== false && !keep.has(e.id)).length; if (n && !confirm(`會把 ${n} 位不在名單上的人設為停用，確定嗎？`)) return; }
+        if (kw !== (M().importOnly ?? "智取店")) saveMaster({ importOnly: kw });
+        applyRows(rows, hub, sync);
+      }
+    };
   };
+  draw();
 }
 function openEmpPaste() {
   const m = openModal(`<h2>批次貼上名單</h2><div class="sub">從 Excel 複製貼上，一行一個人，欄位順序不拘（姓名、工號、部門、時薪類別）。</div>
