@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v25";
+const APP_VER = "v26";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -523,6 +523,8 @@ function storesHtml() {
     <div class="row" style="margin-bottom:10px">
       <input type="text" id="newStore" placeholder="門市名稱" style="width:110px"><input type="text" id="newStoreAddr" placeholder="地址（選填）" style="width:220px">
       <button class="btn primary" data-act="addStore">新增門市</button>
+      <label class="btn primary" for="storeFile">匯入 Excel…</label><input type="file" id="storeFile" data-ch="storeFile" accept=".xlsx,.xls,.csv" hidden>
+      <button class="btn" data-act="storeTpl">下載範本</button>
       <button class="btn" data-act="storePaste">批次貼上門市…</button>
       <span class="spacer"></span>
       <button class="btn" data-act="geocode" ${noXY ? "" : "disabled"}>依地址自動找座標${noXY ? `（${noXY} 家）` : ""}</button>
@@ -530,6 +532,7 @@ function storesHtml() {
     <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>座標</th><th>早班要排／工作量</th><th>晚班要排／工作量</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
       <b>座標</b>用來把距離近的店分給同一個人。可以按「依地址自動找座標」，找不到的話在 Google 地圖對門市按右鍵，複製「緯度, 經度」貼到座標欄（也可以直接貼 Google 地圖網址）。<br>
+      <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、座標、早班要排、早班工作量、晚班要排、晚班工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
       <b>工作量</b>是自動排班平均分配的依據，單位自訂（例如包裹量、預估分鐘），沒填當 1。取消勾選＝這個班別不用排這家店。<br>
       列表順序也是分組依據：沒有座標時，會照順序把相鄰的店分給同一個人。</p></div>`;
 }
@@ -671,6 +674,7 @@ const ACT = {
     if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; saveMaster({ stores: l });
   },
   storePaste: () => openStorePaste(),
+  storeTpl: () => storeTemplate(),
   geocode: () => geocodeAll(),
   addEmp: () => {
     const name = ($("#newEmp")?.value || "").trim(), code = ($("#newEmpCode")?.value || "").trim().toUpperCase();
@@ -715,6 +719,7 @@ const CH = {
   eMax: t => patchEmp(t.dataset.id, { maxDays: t.value === "" ? null : +t.value }),
   eAct: t => patchEmp(t.dataset.id, { active: t.checked }),
   lvYm: t => { if (t.value) { S.leaveYm = t.value; render(); } },
+  storeFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreFile(f); },
   restore: t => { const f = t.files[0]; t.value = ""; if (f) restore(f); },
 };
 function onClick(e) {
@@ -871,6 +876,73 @@ function openStorePaste() {
     }
   };
 }
+/* ---------- 門市 Excel 匯入 ----------
+   欄位（順序不拘，看標題）：主要門市、門市名稱、地址、座標（或 緯度／經度）、早班工作量、晚班工作量、早班要排、晚班要排
+   沒有「主要門市」欄 → 全部放到目前選的主要門市；有寫但系統沒有 → 自動新增那間主要門市 */
+const STORE_COLS = { hub: /主要門市|母店/, name: /門市名稱|店名|^門市$|名稱/, addr: /地址/, xy: /座標/, lat: /緯度|lat/i, lng: /經度|lng|lon/i,
+  loadAm: /早.*(工作量|量)/, loadPm: /晚.*(工作量|量)/, needAm: /早.*(要排|需排|排班)/, needPm: /晚.*(要排|需排|排班)/ };
+function storeRowsFromAoa(aoa) {
+  const hi = aoa.findIndex(r => (r || []).some(c => STORE_COLS.name.test(String(c ?? "").trim())));
+  if (hi < 0) return null;
+  const H = aoa[hi].map(c => String(c ?? "").trim()), col = {};
+  for (const [k, re] of Object.entries(STORE_COLS)) { const i = H.findIndex((h, j) => re.test(h) && !Object.values(col).includes(j)); if (i >= 0) col[k] = i; }
+  const yes = v => !/^(否|不|n|no|x|0|false)$/i.test(String(v ?? "").trim());
+  const num = v => { const t = String(v ?? "").trim(); return t === "" || isNaN(+t) ? null : +t; };
+  return aoa.slice(hi + 1).map(r => {
+    const g = k => col[k] >= 0 ? r[col[k]] : undefined;
+    const name = String(g("name") ?? "").trim(); if (!name) return null;
+    const xy = parseXY(g("xy")) || (num(g("lat")) != null && num(g("lng")) != null ? { lat: num(g("lat")), lng: num(g("lng")) } : null);
+    return { hubName: String(g("hub") ?? "").trim(), name, addr: String(g("addr") ?? "").trim(), ...(xy || {}),
+      loadAm: num(g("loadAm")), loadPm: num(g("loadPm")),
+      needAm: col.needAm >= 0 && String(g("needAm") ?? "").trim() !== "" ? yes(g("needAm")) : null,
+      needPm: col.needPm >= 0 && String(g("needPm") ?? "").trim() !== "" ? yes(g("needPm")) : null };
+  }).filter(Boolean);
+}
+async function importStoreFile(file) {
+  try {
+    const X = await loadXLSX(), wb = X.read(await file.arrayBuffer(), { type: "array" });
+    let rows = [];
+    for (const n of wb.SheetNames) { const r = storeRowsFromAoa(X.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: false, raw: false })); if (r) rows.push(...r); }
+    if (!rows.length) return toast("找不到門市資料：第一行要有「門市名稱」這個標題，可以先下載範本照著填");
+    const curHub = hubBy(S.hub)?.name || "";
+    const newHubs = [...new Set(rows.map(r => r.hubName).filter(h => h && !hubs().some(x => x.name === h)))];
+    const exist = r => stores().find(s => s.name === r.name);
+    const m = openModal(`<h2>匯入門市</h2><div class="sub">檔案：${esc(file.name)}・讀到 <b>${rows.length}</b> 家（新增 ${rows.filter(r => !exist(r)).length}、更新 ${rows.filter(exist).length}）
+      ${newHubs.length ? `<br>會新增主要門市：<b>${newHubs.map(esc).join("、")}</b>` : ""}${rows.some(r => !r.hubName) ? `<br>沒寫主要門市的放到「${esc(curHub)}」` : ""}</div>
+      <div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>座標</th><th>早班</th><th>晚班</th><th></th></tr>
+      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td class="small">${r.lat != null ? "✓" : '<span class="muted">—</span>'}</td>
+        <td>${r.needAm === false ? '<span class="muted">不排</span>' : r.loadAm ?? ""}</td><td>${r.needPm === false ? '<span class="muted">不排</span>' : r.loadPm ?? ""}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>
+      <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">匯入</button></div>`);
+    m.onclick = async ev => {
+      const b = ev.target.closest("button"); if (!b) return;
+      if (b.dataset.x === "cancel") return closeModal();
+      if (b.dataset.x !== "go") return;
+      const hs = [...hubs()];
+      for (const n of newHubs) hs.push({ id: uid("h"), name: n });
+      const hubId = n => n ? hs.find(h => h.name === n).id : S.hub;
+      const clean = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+      const list = [...stores()];
+      for (const r of rows) {
+        const patch = clean({ hub: hubId(r.hubName), addr: r.addr, lat: r.lat, lng: r.lng, loadAm: r.loadAm, loadPm: r.loadPm, needAm: r.needAm, needPm: r.needPm });
+        const i = list.findIndex(s => s.name === r.name);
+        if (i >= 0) list[i] = { ...list[i], ...patch }; else list.push({ id: uid("s"), name: r.name, ...patch });
+      }
+      await saveMaster({ hubs: hs, stores: list }); closeModal();
+      toast(`已匯入 ${rows.length} 家門市${newHubs.length ? `，新增 ${newHubs.length} 間主要門市` : ""}`);
+    };
+  } catch (e) { toast("讀取失敗：" + e.message); }
+}
+async function storeTemplate() {
+  const X = await loadXLSX(), wb = X.utils.book_new();
+  const rows = [["主要門市", "門市名稱", "地址", "座標", "早班要排", "早班工作量", "晚班要排", "晚班工作量"]];
+  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).map(s => [h.name, s.name, s.addr || "", hasXY(s) ? `${s.lat},${s.lng}` : "", needs(s, "am") ? "是" : "否", s.loadAm ?? "", needs(s, "pm") ? "是" : "否", s.loadPm ?? ""]))
+    : [[hubBy(S.hub)?.name || "新莊榮華", "範例門市", "新北市新莊區○○路1號", "25.0330,121.4450", "是", 30, "是", 20]];
+  const ws = X.utils.aoa_to_sheet([...rows, ...list]);
+  ws["!cols"] = [10, 12, 30, 20, 8, 10, 8, 10].map(w => ({ wch: w }));
+  X.utils.book_append_sheet(wb, ws, "門市");
+  X.writeFile(wb, `門市匯入範本_${S.reg?.name || ""}.xlsx`);
+}
+
 // 依地址找座標（OpenStreetMap，免金鑰；台灣地址不一定找得到）
 async function geocodeAll() {
   const list = storesOf(S.hub).filter(s => !hasXY(s) && s.addr);
