@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v28";
+const APP_VER = "v29";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -326,6 +326,7 @@ function autoHtml() {
   const r = rules(), hub = hubBy(S.hub), st = storesOf(S.hub), people = empsOf(S.hub).filter(e => e.active !== false);
   S.autoStart ||= mondayOf(addDays(todayDs(), 7)); S.autoDays ||= 14;
   const noXY = st.filter(s => !hasXY(s)).length;
+  if (noXY) setTimeout(() => autoLocate(st), 0);
   const p = S.plan && S.plan.hub === S.hub ? S.plan : null;
   const setup = `<div class="card"><h3>自動排班・${esc(hub?.name)}</h3>
     <div class="row">
@@ -340,7 +341,7 @@ function autoHtml() {
       （只上早班 ${people.filter(e => e.shift === "am").length}、只上晚班 ${people.filter(e => e.shift === "pm").length}、早晚都可 ${people.filter(e => !e.shift || e.shift === "any").length}）<br>
       條件：每人每週最多 <b>${r.maxDays}</b> 天、最多連上 <b>${r.maxConsec}</b> 天${r.maxStores ? `、每班最多 <b>${r.maxStores}</b> 家店` : ""}${r.capAm || r.capPm ? `、每班工作量上限 早 <b>${r.capAm || "不限"}</b>／晚 <b>${r.capPm || "不限"}</b>` : ""}${r.maxKm ? `、同一人負責的店相距 <b>${r.maxKm}</b> 公里內` : ""}
       <a href="#" data-act="goSettings">修改條件</a><br>
-      ${noXY ? `<span style="color:var(--warn)">有 ${noXY} 家門市還沒定位，分配時無法依距離分組（會照門市列表的順序分）。<a href="#" data-act="goStores">去定位</a></span>` : "所有門市都已定位，會把距離近的店分給同一個人。"}
+      ${noXY ? `<span class="muted">有 ${noXY} 家門市還沒算出位置，這幾家會照門市列表的順序和相鄰的店排在一起。</span>` : "所有門市都已定位，會把距離近的店分給同一個人。"}
     </div></div>`;
   if (!p) return setup + `<div class="card muted">按「產生班表」後，這裡會先顯示預覽，確認沒問題再按「確認寫入」。</div>`;
   const days = range(p.start, p.days);
@@ -511,6 +512,7 @@ function peopleHtml() {
 /* ---------- 門市 ---------- */
 function storesHtml() {
   const hub = hubBy(S.hub), list = storesOf(S.hub);
+  setTimeout(() => autoLocate(stores()), 0);
   const hubOpts = sel => hubs().map(h => `<option value="${h.id}" ${h.id === sel ? "selected" : ""}>${esc(h.name)}</option>`).join("");
   const rows = list.map((s, i) => `<tr>
     <td class="muted">${i + 1}</td>
@@ -528,14 +530,12 @@ function storesHtml() {
       <button class="btn" data-act="storeTpl">下載範本</button>
       <button class="btn" data-act="storePaste">批次貼上門市…</button>
       <span class="spacer"></span>
-      <button class="btn" data-act="geocode" ${noXY ? "" : "disabled"} title="用地址算出各店位置，自動排班才能把距離近的店分給同一個人">${noXY ? `依地址定位門市（${noXY} 家未定位）` : "門市都已定位 ✓"}</button>
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>工作量（整天）</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
-      <b>定位</b>：按「依地址定位門市」，系統會用地址算出每家店的位置，自動排班時把距離近的店分給同一個人。<br>
       <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
       <b>工作量</b>填整天的量（例如每日平均包裹量），自動排班會依這個平均分配，沒填當 1。每家店早班、晚班都會排人。<br>
-      列表順序也是分組依據：門市還沒定位時，會照順序把相鄰的店分給同一個人。</p></div>`;
+      系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
 }
 
 /* ---------- 畫休（主管端） ---------- */
@@ -708,7 +708,7 @@ const CH = {
   rule: t => saveMaster({ rules: { ...rules(), [t.dataset.k]: t.value === "" ? 0 : +t.value } }),
   rName: t => { const nm = t.value.trim(); if (nm) S.store.set(`regions/${t.dataset.id}`, { name: nm }, true); },
   sName: t => { const nm = t.value.trim(); if (!nm || stores().some(s => s.name === nm && s.id !== t.dataset.id)) { toast("名稱空白或重複"); return render(); } patchStore(t.dataset.id, { name: nm }); },
-  sAddr: t => patchStore(t.dataset.id, { addr: t.value.trim() }),
+  sAddr: t => { const id = t.dataset.id; patchStore(id, { addr: t.value.trim(), lat: null, lng: null }).then(() => setTimeout(() => autoLocate([storeBy(id)]), 500)); },
   sXY: t => { const xy = parseXY(t.value); if (t.value.trim() && !xy) { toast("看不懂這個座標，請貼「緯度,經度」或 Google 地圖網址"); return; } patchStore(t.dataset.id, xy || { lat: null, lng: null }); },
   sNeedAm: t => patchStore(t.dataset.id, { needAm: t.checked }),
   sNeedPm: t => patchStore(t.dataset.id, { needPm: t.checked }),
@@ -946,6 +946,28 @@ async function storeTemplate() {
 }
 
 // 依地址找座標（OpenStreetMap，免金鑰；台灣地址不一定找得到）
+// 背景自動定位：用地址算座標（不用按按鈕）。每家店每次開網頁只試一次，找不到就照列表順序分組。
+const triedXY = new Set();
+async function autoLocate(list) {
+  list = list.filter(s => s && s.addr && !hasXY(s) && !triedXY.has(s.id + s.addr));
+  if (!list.length || S.locating) return;
+  S.locating = true;
+  try {
+    for (const s of list) {
+      triedXY.add(s.id + s.addr);
+      const tries = [s.addr.replace(/\d+[、,]?\d*樓.*$/, ""), s.addr.replace(/[\d\-之]+號.*$/, "")];
+      for (const q of [...new Set(tries)]) {
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=tw&accept-language=zh-TW&q=${encodeURIComponent(q)}`);
+          const j = await r.json();
+          if (j[0]) { const cur = storeBy(s.id); if (cur && cur.addr === s.addr) await patchStore(s.id, { lat: +j[0].lat, lng: +j[0].lon }); break; }
+        } catch {}
+        await new Promise(r => setTimeout(r, 1100));
+      }
+      await new Promise(r => setTimeout(r, 1100));
+    }
+  } finally { S.locating = false; }
+}
 async function geocodeAll() {
   const list = storesOf(S.hub).filter(s => !hasXY(s) && s.addr);
   if (!list.length) return;
