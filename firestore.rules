@@ -1,26 +1,43 @@
 rules_version = '2';
-// 智取店排班系統 — Firestore 安全規則
-// 貼到 Firebase 主控台 → Firestore Database → 規則，按「發布」。
+// 智取店排班系統 v2 — Firestore 安全規則（各區域資料分開）
+// 貼到 Firebase 主控台 → Firestore Database → 規則，整段取代後按「發布」。
 // 下面的 Email 要和 firebase-config.js 的 OWNER_EMAIL 一樣。
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
     function email()    { return request.auth.token.email.lower(); }
     function isOwner()  { return signedIn() && email() == 'tinaho8891@gmail.com'; }
-    function accPath()  { return /databases/$(database)/documents/config/access; }
-    function pubPath()  { return /databases/$(database)/documents/config/public; }
-    function isAdmin()  { return isOwner() || (signedIn() && exists(accPath()) && email() in get(accPath()).data.admins); }
-    function isViewer() { return signedIn() && exists(accPath()) && email() in get(accPath()).data.viewers; }
-    function isPublic() { return exists(pubPath()) && get(pubPath()).data.publicRead == true; }
-    function canRead()  { return isAdmin() || isViewer() || isPublic(); }
+    function reg(r)     { return get(/databases/$(database)/documents/regions/$(r)).data; }
+    function rAdmin(r)  { return isOwner() || (signedIn() && email() in reg(r).admins); }
+    function rRead(r)   { return rAdmin(r) || (signedIn() && email() in reg(r).viewers); }
+    function lv(r)      { return get(/databases/$(database)/documents/regions/$(r)/cfg/leave).data; }
 
-    // 「不用登入也能看」開關：任何人可讀
-    match /config/public { allow read: if true; allow write: if isAdmin(); }
-    // 主管／檢視者名單：登入者可讀（用來判斷自己的身分）
-    match /config/access { allow read: if signedIn(); allow write: if isAdmin(); }
-    // 門市、人員設定
-    match /config/{doc}  { allow read: if canRead(); allow write: if isAdmin(); }
-    // 每月班表
-    match /months/{ym}   { allow read: if canRead(); allow write: if isAdmin(); }
+    // 區域：最高管理者建立／刪除；區域主管可以改自己區域的主管、檢視者名單
+    match /regions/{r} {
+      allow get: if rRead(r);
+      allow list: if isOwner() || (signedIn() && (email() in resource.data.admins || email() in resource.data.viewers));
+      allow create, delete: if isOwner();
+      allow update: if rAdmin(r);
+
+      // 畫休設定（含員工名單）：員工不用登入也要讀得到
+      match /cfg/leave { allow read: if true; allow write: if rAdmin(r); }
+      // 母店、門市、人員、排班條件
+      match /cfg/{doc} { allow read: if rRead(r); allow write: if rAdmin(r); }
+      // 每月班表
+      match /months/{ym} { allow read: if rRead(r); allow write: if rAdmin(r); }
+      // 員工送出的畫休：開放期間、只能寫當期、欄位固定
+      match /leave/{id} {
+        allow read, delete: if rAdmin(r);
+        allow create, update: if rAdmin(r) || (
+          lv(r).open == true &&
+          request.resource.data.ym == lv(r).ym &&
+          id == request.resource.data.ym + '_' + request.resource.data.eid &&
+          request.resource.data.keys().hasOnly(['ym', 'eid', 'name', 'days', 'note', 'submittedAt', 'late']));
+      }
+    }
+
+    // 舊版資料（保留不刪）：只有最高管理者讀得到
+    match /config/{doc}  { allow read: if isOwner(); }
+    match /months/{ym}   { allow read: if isOwner(); }
   }
 }

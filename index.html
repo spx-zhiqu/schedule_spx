@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 <header class="topbar">
@@ -21,23 +21,12 @@
     <img src="icon.svg" alt="" width="28" height="28">
     <span>智取店排班系統</span>
   </div>
-  <div class="month-nav">
-    <button class="icon-btn" id="prevMonth" aria-label="上個月">‹</button>
-    <span id="monthLabel">—</span>
-    <button class="icon-btn" id="nextMonth" aria-label="下個月">›</button>
-  </div>
-  <div class="user-box" id="userBox"></div>
+  <div class="topctl" id="topCtl"></div>
 </header>
 
 <div id="banner" class="banner" hidden></div>
 
-<nav class="tabs" id="tabs">
-  <button data-tab="overview" class="active">漏排總覽</button>
-  <button data-tab="grid">排班表</button>
-  <button data-tab="day">單日調度</button>
-  <button data-tab="leave" data-admin>畫休</button>
-  <button data-tab="settings" data-admin>設定</button>
-</nav>
+<nav class="tabs" id="tabs"></nav>
 
 <main id="main">
   <div class="loading">載入中…</div>
@@ -46,6 +35,6 @@
 <div id="modalRoot"></div>
 <div id="toast" class="toast" hidden></div>
 
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=20"></script>
 </body>
 </html>

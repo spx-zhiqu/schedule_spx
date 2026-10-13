@@ -1,5 +1,6 @@
 // 員工畫休頁：免登入，選自己的名字 → 在月曆上點日期畫休 → 送出
-import { createStore } from "./store.js?v=3";
+import { createStore } from "./store.js?v=4";
+const RID = new URLSearchParams(location.search).get("r") || "";
 
 const WD = ["一", "二", "三", "四", "五", "六", "日"];
 const CODES = { off: "休假", am: "只能早班", pm: "只能晚班", any: "早晚都可以" };
@@ -18,15 +19,16 @@ init();
 async function init() {
   try { L.store = await createStore(); } catch (e) { main.innerHTML = `<div class="card">無法連線：${esc(e.message)}</div>`; return; }
   L.store.setErrorHandler(e => { main.innerHTML = `<div class="card login"><h2>目前無法讀取</h2><p class="muted">${esc(e.code || e.message)}</p></div>`; });
-  try { L.me = JSON.parse(localStorage.getItem("zq-leave-me") || "null"); } catch {}
-  L.store.watchDoc("config/leave", c => { L.cfg = c; if (L.me && !roster().some(r => r.id === L.me.id)) L.me = null; watchMine(); render(); });
+  if (!RID) { main.innerHTML = `<div class="card login"><h2>網址不完整</h2><p class="muted">請跟主管要正確的畫休網址。</p></div>`; return; }
+  try { L.me = JSON.parse(localStorage.getItem("zq-leave-me-" + RID) || "null"); } catch {}
+  L.store.watch(`regions/${RID}/cfg/leave`, c => { L.cfg = c; if (L.me && !roster().some(r => r.id === L.me.id)) L.me = null; watchMine(); render(); });
 }
 const roster = () => L.cfg?.roster || [];
 function watchMine() {
   if (L.unsub) { L.unsub(); L.unsub = null; }
   L.doc = undefined;
   if (!L.cfg?.open || !L.me) return;
-  L.unsub = L.store.watchDoc(`leave/${L.cfg.ym}_${L.me.id}`, d => {
+  L.unsub = L.store.watch(`regions/${RID}/leave/${L.cfg.ym}_${L.me.id}`, d => {
     L.doc = d;
     if (!L.dirty) { L.days = { ...(d?.days || {}) }; L.note = d?.note || ""; }
     render();
@@ -35,12 +37,12 @@ function watchMine() {
 function pickMe(id) {
   const r = roster().find(x => x.id === id); if (!r) return;
   L.me = { id: r.id, name: r.name };
-  try { localStorage.setItem("zq-leave-me", JSON.stringify(L.me)); } catch {}
+  try { localStorage.setItem("zq-leave-me-" + RID, JSON.stringify(L.me)); } catch {}
   L.dirty = false; watchMine(); render();
 }
 function notMe() {
   if (L.dirty && !confirm("還沒送出的變更會不見，確定要換人嗎？")) return;
-  L.me = null; L.dirty = false; try { localStorage.removeItem("zq-leave-me"); } catch {}
+  L.me = null; L.dirty = false; try { localStorage.removeItem("zq-leave-me-" + RID); } catch {}
   watchMine(); render();
 }
 
@@ -50,13 +52,13 @@ function render() {
     main.innerHTML = `<div class="card login"><img src="icon.svg" width="56" height="56" alt=""><h2>目前沒有開放畫休</h2><p class="muted">主管開放後，再用同一個網址進來就可以畫休。</p></div>`; return;
   }
   const c = L.cfg;
-  const head = `<div class="card lvhead"><div class="lvtitle">${ymLabel(c.ym)} 畫休</div>
+  const head = `<div class="card lvhead"><div class="lvtitle">${c.region ? esc(c.region) + " " : ""}${ymLabel(c.ym)} 畫休</div>
     ${c.deadline ? `<div class="muted">請在 <b>${dsLabel(c.deadline)}</b> 前完成${deadlinePassed() ? `<span class="late">（已過截止日，送出會標記為逾期）</span>` : ""}</div>` : ""}
     ${c.maxOff ? `<div class="muted">每人最多畫休 <b>${c.maxOff}</b> 天</div>` : ""}
     ${c.note ? `<div class="lvnote">${esc(c.note)}</div>` : ""}</div>`;
   if (!L.me) {
     const groups = {};
-    for (const r of roster()) (groups[r.blockName || "其他"] ||= []).push(r);
+    for (const r of roster()) (groups[r.group || "其他"] ||= []).push(r);
     main.innerHTML = head + `<div class="card"><h3>請先選你的名字</h3>
       ${Object.entries(groups).map(([g, list]) => `<div class="pgroup">${esc(g)}</div><div class="namegrid">${list.map(r => `<button class="pbtn" data-me="${r.id}">${esc(r.name)}</button>`).join("")}</div>`).join("")}
       <p class="muted small" style="margin-top:12px">找不到自己的名字請跟主管說。</p></div>`;
@@ -124,7 +126,7 @@ async function send() {
   if (c.maxOff && offN > c.maxOff) return toast(`最多只能畫休 ${c.maxOff} 天`);
   const btn = $("#lvSend"); btn.disabled = true; btn.textContent = "送出中…";
   try {
-    await L.store.setDocAt(`leave/${c.ym}_${L.me.id}`, {
+    await L.store.set(`regions/${RID}/leave/${c.ym}_${L.me.id}`, {
       ym: c.ym, eid: L.me.id, name: L.me.name, days: L.days, note: (L.note || "").slice(0, 300),
       submittedAt: new Date().toISOString(), late: deadlinePassed(),
     });
