@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v36";
+const APP_VER = "v37";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -689,7 +689,6 @@ function settingsHtml() {
       <p class="muted small">沒填＝不限。工作量上限沒填時，會把當天的工作量平均分給可以上班的人。</p></div>
   </div><div>
     <div class="card"><h3>權限・${esc(S.reg?.name)}</h3>
-      <p class="small">最高管理者：<b>${esc(S.store.owner)}</b>（看得到所有區域）</p>
       <label class="small">這個區域的主管（可編輯）Email，一行一個</label>
       <textarea id="admins">${esc((S.reg?.admins || []).join("\n"))}</textarea>
       <label class="small">檢視者（只能看）Email，一行一個</label>
