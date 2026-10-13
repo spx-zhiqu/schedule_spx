@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v27";
+const APP_VER = "v28";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -57,7 +57,9 @@ const eHubs = e => Array.isArray(e?.hubs) ? e.hubs.filter(h => hubBy(h)) : e?.hu
 const hubNames = e => eHubs(e).map(h => hubBy(h).name).join("、");
 const empsOf = hub => emps().filter(e => eHubs(e).includes(hub));
 const cell = (ds, eid) => (S.months[ymOf(ds)] || {})[ds + "_" + eid] || null;
-const needs = (s, sh) => s[sh === "am" ? "needAm" : "needPm"] !== false;
+// 每家店早晚都要排；只有標成「不排」的店（例：撤店）例外
+const isOff = s => s.off === true || (s.needAm === false && s.needPm === false);
+const needs = s => !isOff(s);
 // 工作量看整天（舊資料可能分早晚）
 const loadOf = s => +(s.load ?? s.loadAm ?? s.loadPm) || 1;
 // 某天某班，每家店由誰負責（整個區域的人都算，跨店支援也算）
@@ -334,7 +336,7 @@ function autoHtml() {
       <button class="btn primary big" data-act="autoRun">產生班表</button>
     </div>
     <div class="small muted" style="margin-top:10px;line-height:1.8">
-      這間主要門市：門市 <b>${st.length}</b> 家（早班要排 ${st.filter(s => needs(s, "am")).length}、晚班要排 ${st.filter(s => needs(s, "pm")).length}）・可排人員 <b>${people.length}</b> 人
+      這間主要門市：門市 <b>${st.filter(needs).length}</b> 家（早晚都要排）・可排人員 <b>${people.length}</b> 人
       （只上早班 ${people.filter(e => e.shift === "am").length}、只上晚班 ${people.filter(e => e.shift === "pm").length}、早晚都可 ${people.filter(e => !e.shift || e.shift === "any").length}）<br>
       條件：每人每週最多 <b>${r.maxDays}</b> 天、最多連上 <b>${r.maxConsec}</b> 天${r.maxStores ? `、每班最多 <b>${r.maxStores}</b> 家店` : ""}${r.capAm || r.capPm ? `、每班工作量上限 早 <b>${r.capAm || "不限"}</b>／晚 <b>${r.capPm || "不限"}</b>` : ""}${r.maxKm ? `、同一人負責的店相距 <b>${r.maxKm}</b> 公里內` : ""}
       <a href="#" data-act="goSettings">修改條件</a><br>
@@ -512,10 +514,8 @@ function storesHtml() {
   const hubOpts = sel => hubs().map(h => `<option value="${h.id}" ${h.id === sel ? "selected" : ""}>${esc(h.name)}</option>`).join("");
   const rows = list.map((s, i) => `<tr>
     <td class="muted">${i + 1}</td>
-    <td><input type="text" value="${esc(s.name)}" data-ch="sName" data-id="${s.id}" style="width:90px"></td>
+    <td class="nowrap"><input type="text" value="${esc(s.name)}" data-ch="sName" data-id="${s.id}" style="width:90px">${isOff(s) ? ` <span class="todo" title="這家店目前不排班">不排</span> <a href="#" data-act="sOn" data-id="${s.id}" class="small">恢復排班</a>` : ""}</td>
     <td><input type="text" value="${esc(s.addr || "")}" data-ch="sAddr" data-id="${s.id}" placeholder="地址" style="width:220px"></td>
-    <td class="ctr"><input type="checkbox" data-ch="sNeedAm" data-id="${s.id}" ${needs(s, "am") ? "checked" : ""}></td>
-    <td class="ctr"><input type="checkbox" data-ch="sNeedPm" data-id="${s.id}" ${needs(s, "pm") ? "checked" : ""}></td>
     <td><input type="number" min="0" step="any" value="${s.load ?? s.loadAm ?? ""}" placeholder="1" data-ch="sLoad" data-id="${s.id}" style="width:80px"></td>
     <td><select data-ch="sHub" data-id="${s.id}">${hubOpts(s.hub)}</select></td>
     <td class="nowrap"><button class="btn small" data-act="sMove" data-id="${s.id}" data-n="-1">↑</button> <button class="btn small" data-act="sMove" data-id="${s.id}" data-n="1">↓</button> <button class="btn small danger" data-act="sDel" data-id="${s.id}">刪</button></td></tr>`).join("");
@@ -530,11 +530,11 @@ function storesHtml() {
       <span class="spacer"></span>
       <button class="btn" data-act="geocode" ${noXY ? "" : "disabled"} title="用地址算出各店位置，自動排班才能把距離近的店分給同一個人">${noXY ? `依地址定位門市（${noXY} 家未定位）` : "門市都已定位 ✓"}</button>
     </div>
-    <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>早班要排</th><th>晚班要排</th><th>工作量（整天）</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
+    <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>工作量（整天）</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
       <b>定位</b>：按「依地址定位門市」，系統會用地址算出每家店的位置，自動排班時把距離近的店分給同一個人。<br>
-      <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、早班要排、晚班要排、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
-      <b>工作量</b>填整天的量（例如每日平均包裹量），自動排班會依這個平均分配，沒填當 1。取消勾選＝這個班別不用排這家店。<br>
+      <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
+      <b>工作量</b>填整天的量（例如每日平均包裹量），自動排班會依這個平均分配，沒填當 1。每家店早班、晚班都會排人。<br>
       列表順序也是分組依據：門市還沒定位時，會照順序把相鄰的店分給同一個人。</p></div>`;
 }
 
@@ -668,6 +668,7 @@ const ACT = {
     if (stores().some(s => s.name === name)) return toast("已經有同名的門市");
     saveMaster({ stores: [...stores(), { id: uid("s"), name, addr, hub: S.hub }] });
   },
+  sOn: (el, e) => { e.preventDefault(); patchStore(el.dataset.id, { off: false, needAm: true, needPm: true }); },
   sDel: el => { const s = storeBy(el.dataset.id); if (confirm(`刪除門市「${s.name}」？`)) saveMaster({ stores: stores().filter(x => x.id !== s.id) }); },
   sMove: el => {
     const l = [...stores()], i = l.findIndex(s => s.id === el.dataset.id), dir = +el.dataset.n;
@@ -911,8 +912,8 @@ async function importStoreFile(file) {
     const exist = r => stores().find(s => s.name === r.name);
     const m = openModal(`<h2>匯入門市</h2><div class="sub">檔案：${esc(file.name)}・讀到 <b>${rows.length}</b> 家（新增 ${rows.filter(r => !exist(r)).length}、更新 ${rows.filter(exist).length}）
       ${newHubs.length ? `<br>會新增主要門市：<b>${newHubs.map(esc).join("、")}</b>` : ""}${rows.some(r => !r.hubName) ? `<br>沒寫主要門市的放到「${esc(curHub)}」` : ""}</div>
-      <div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>早班</th><th>晚班</th><th>工作量</th><th></th></tr>
-      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td>${r.needAm === false ? '<span class="muted">不排</span>' : "排"}</td><td>${r.needPm === false ? '<span class="muted">不排</span>' : "排"}</td><td>${r.load ?? ""}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>
+      <div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>工作量</th><th></th></tr>
+      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td>${r.load ?? ""}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>
       <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">匯入</button></div>`);
     m.onclick = async ev => {
       const b = ev.target.closest("button"); if (!b) return;
@@ -935,11 +936,11 @@ async function importStoreFile(file) {
 }
 async function storeTemplate() {
   const X = await loadXLSX(), wb = X.utils.book_new();
-  const rows = [["主要門市", "門市名稱", "地址", "早班要排", "晚班要排", "工作量"]];
-  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).map(s => [h.name, s.name, s.addr || "", needs(s, "am") ? "是" : "否", needs(s, "pm") ? "是" : "否", s.load ?? s.loadAm ?? ""]))
-    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", "是", "是", 1500]];
+  const rows = [["主要門市", "門市名稱", "地址", "工作量"]];
+  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).filter(needs).map(s => [h.name, s.name, s.addr || "", s.load ?? s.loadAm ?? ""]))
+    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", 1500]];
   const ws = X.utils.aoa_to_sheet([...rows, ...list]);
-  ws["!cols"] = [12, 12, 36, 9, 9, 10].map(w => ({ wch: w }));
+  ws["!cols"] = [12, 12, 36, 10].map(w => ({ wch: w }));
   X.utils.book_append_sheet(wb, ws, "門市");
   X.writeFile(wb, `門市匯入範本_${S.reg?.name || ""}.xlsx`);
 }
