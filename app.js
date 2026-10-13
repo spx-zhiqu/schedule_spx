@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v35";
+const APP_VER = "v36";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -110,7 +110,7 @@ async function init() {
   S.ym = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
   S.ovStart = mondayOf(todayDs());
   S.autoStart = mondayOf(addDays(todayDs(), 7)); S.autoDays = 14;
-  S.tab = ls.get("zq2-tab") || "overview";
+  S.tab = ls.get("zq2-tab") || "home";
   try { S.store = await createStore(); }
   catch (e) { main.innerHTML = `<div class="card">無法連線到 Firebase：${esc(e.message)}</div>`; return; }
   if (S.store.mode === "local") { const b = $("#banner"); b.hidden = false; b.innerHTML = "目前是<b>本機試用模式</b>：資料只存在這台電腦的瀏覽器。"; }
@@ -187,7 +187,7 @@ const monthsReady = list => [...list].every(ym => S.months[ym]);
 function setTab(t) { S.tab = t; ls.set("zq2-tab", t); render(); }
 
 /* ================= 畫面 ================= */
-const TABS = [["overview", "漏排總覽"], ["grid", "班表"], ["auto", "自動排班", 1], ["people", "人員", 1], ["support", "可支援門市", 1], ["stores", "門市", 1], ["leave", "畫休", 1], ["settings", "設定", 1]];
+const TABS = [["home", "開始", 1], ["people", "1.人員", 1], ["support", "2.可支援門市", 1], ["stores", "3.門市", 1], ["leave", "4.畫休", 1], ["auto", "5.自動排班", 1], ["grid", "6.班表"], ["overview", "7.漏排總覽"], ["settings", "設定", 1]];
 function render() {
   if (S.renderQueued) return;
   S.renderQueued = true;
@@ -207,7 +207,7 @@ function renderNow() {
   if (S.apolloPending && admin) setTimeout(runApolloPending);
   if (!hubs().length && S.tab !== "settings") return html(admin ? firstHubHtml() : `<div class="card login"><h2>這個區域還沒有設定主要門市</h2><p class="muted">請主管先到「設定」新增主要門市。</p></div>`);
   const keep = keepScroll();
-  const v = { overview: overviewHtml, grid: gridHtml, auto: autoHtml, people: peopleHtml, support: supportHtml, stores: storesHtml, leave: leaveHtml, settings: settingsHtml }[S.tab] || overviewHtml;
+  const v = { home: homeHtml, overview: overviewHtml, grid: gridHtml, auto: autoHtml, people: peopleHtml, support: supportHtml, stores: storesHtml, leave: leaveHtml, settings: settingsHtml }[S.tab] || overviewHtml;
   html(v());
   keep();
 }
@@ -251,6 +251,31 @@ function noRegionHtml() {
 function firstHubHtml() {
   return `<div class="card login"><h2>先新增主要門市</h2><p class="muted">主要門市是排班的單位，例如「新莊榮華」。新增後再到「門市」把它底下負責的各家門市加進去。</p>
     <div class="row" style="justify-content:center"><input type="text" id="newHub" placeholder="主要門市名稱" style="width:180px"><button class="btn primary" data-act="addHub">新增主要門市</button></div></div>`;
+}
+
+/* ---------- 開始 ---------- */
+function homeHtml() {
+  const hub = hubBy(S.hub), st = storesOf(S.hub).filter(needs), ppl = empsOf(S.hub).filter(e => e.active !== false);
+  const sup = emps().filter(e => e.active !== false && (e.stores || []).some(id => !eHubs(e).includes(storeBy(id)?.hub))).length;
+  const noXY = st.filter(s => !hasXY(s)).length;
+  const lv = S.leaveCfg, lvOpen = !!lv?.open, lvSubs = lvOpen ? Object.keys(S.leaves[lv.ym] || {}).length : 0;
+  const days = range(S.ovStart, 14), ready = monthsReady(new Set(days.map(d => ymOf(d.ds))));
+  const miss = ready ? days.reduce((n, d) => n + missing(d.ds, "am", S.hub).length + missing(d.ds, "pm", S.hub).length, 0) : null;
+  const am = ppl.filter(e => e.shift === "am").length, pm = ppl.filter(e => e.shift === "pm").length;
+  const steps = [
+    ["people", "1. 人員", ppl.length ? `${esc(hub?.name)} ${ppl.length} 人（早班 ${am}、晚班 ${pm}、早晚都可 ${ppl.length - am - pm}）` : "還沒有人員，從 Apollo「我的部屬」匯入", ppl.length > 0, "管理人員"],
+    ["support", "2. 可支援門市", sup ? `${sup} 人可以跨主要門市支援` : "每個人預設只排自己主要門市底下的門市", true, "設定支援"],
+    ["stores", "3. 門市", st.length ? `${st.length} 家門市${noXY ? `（${noXY} 家還沒算出位置）` : ""}` : "還沒有門市，可以用 Excel 匯入", st.length > 0, "設定門市"],
+    ["leave", "4. 畫休", lvOpen ? `${lv.ym.replace("-", " 年 ")} 月開放中・已送出 ${lvSubs} 人` : "目前沒有開放畫休", true, "畫休"],
+    ["auto", "5. 自動排班", "選起始日 → 產生班表 → 預覽 → 確認寫入", ppl.length > 0 && st.length > 0, "去排班"],
+    ["grid", "6. 班表", "看整個月的班，點格子可以手動改", true, "看班表"],
+    ["overview", "7. 漏排總覽", miss == null ? "載入中…" : miss ? `這 14 天還有 <b class="bad">${miss}</b> 店次沒人` : "這 14 天早晚班都排滿 ✓", miss === 0, "看漏排"],
+  ];
+  const next = !ppl.length ? "1. 人員" : !st.length ? "3. 門市" : miss ? "5. 自動排班" : "6. 班表";
+  return `<div class="card hero"><h2>每一期只要做 4 → 5 → 7</h2>
+      <div class="muted">人員或門市有異動時，再回 1～3 調整。設定會自動儲存。<b class="nexts">建議下一步：${next}</b></div></div>
+    ${steps.map(([tab, t, d, ok, btn]) => `<div class="card step"><div class="stat ${ok ? "ok" : "todo2"}">${ok ? "✓" : "!"}</div>
+      <div class="stxt"><h3>${t}</h3><div class="muted">${d}</div></div><button class="btn sec" data-act="go" data-tab="${tab}">${btn}</button></div>`).join("")}`;
 }
 
 /* ---------- 漏排總覽 ---------- */
@@ -699,6 +724,7 @@ const ACT = {
   assign: el => openAssign(el.dataset.store, el.dataset.ds, el.dataset.sh),
   editCell: el => openCellEditor(el.dataset.e, el.dataset.ds),
   exportX: () => exportExcel(),
+  go: el => setTab(el.dataset.tab),
   goSettings: (el, e) => { e.preventDefault(); setTab("settings"); },
   goStores: (el, e) => { e.preventDefault(); setTab("stores"); },
   autoRun: async () => {
