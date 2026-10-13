@@ -27,3 +27,6 @@ regions/{rid}/leave/{ym_員工id}  員工送出的畫休
 2. 推到 GitHub main，Pages 1～2 分鐘後更新。
 
 `firebase-config.js` 的 firebaseConfig 改成 `null` 就是本機試用模式（資料存在瀏覽器）。
+
+## 發新版要改的地方
+`app.js` 的 `APP_VER`、`index.html` 的 `app.js?v=`、`version.json` 三個一起改成同一個版本號。網站打開時會比對 version.json，版本不同就自動重新載入，使用者不用手動強制重新整理。
