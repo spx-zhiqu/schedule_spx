@@ -6,6 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
+const APP_VER = "v25";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -211,7 +212,7 @@ function renderTop() {
     : S.reg ? `<span class="rname">${esc(S.reg.name)}</span>` : "";
   const hubSel = S.rid && hubs().length ? `<label class="hubpick">主要門市 <select id="hubSel">${hubs().map(h => `<option value="${h.id}" ${h.id === S.hub ? "selected" : ""}>${esc(h.name)}</option>`).join("")}</select></label>` : "";
   const user = !S.user ? "" : `<span class="role">${S.store.mode === "local" ? "本機試用" : isOwner() ? "最高管理者" : isAdmin() ? "主管" : "檢視"}</span>${S.store.mode === "local" ? "" : `<button class="btn small" id="logout" title="${esc(S.user.email)}">登出</button>`}`;
-  box.innerHTML = `${regionSel}${hubSel}<span class="spacer"></span><span class="user-box">${user}</span>`;
+  box.innerHTML = `${regionSel}${hubSel}<span class="spacer"></span><span class="user-box">${user}<span class="muted small" title="網站版本">${APP_VER}</span></span>`;
 }
 function onTopChange(e) {
   const t = e.target;
