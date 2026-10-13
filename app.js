@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v26";
+const APP_VER = "v27";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -58,7 +58,8 @@ const hubNames = e => eHubs(e).map(h => hubBy(h).name).join("、");
 const empsOf = hub => emps().filter(e => eHubs(e).includes(hub));
 const cell = (ds, eid) => (S.months[ymOf(ds)] || {})[ds + "_" + eid] || null;
 const needs = (s, sh) => s[sh === "am" ? "needAm" : "needPm"] !== false;
-const loadOf = (s, sh) => +(s[sh === "am" ? "loadAm" : "loadPm"]) || 1;
+// 工作量看整天（舊資料可能分早晚）
+const loadOf = s => +(s.load ?? s.loadAm ?? s.loadPm) || 1;
 // 某天某班，每家店由誰負責（整個區域的人都算，跨店支援也算）
 function coverage(ds, sh, src) {
   const cov = {};
@@ -337,7 +338,7 @@ function autoHtml() {
       （只上早班 ${people.filter(e => e.shift === "am").length}、只上晚班 ${people.filter(e => e.shift === "pm").length}、早晚都可 ${people.filter(e => !e.shift || e.shift === "any").length}）<br>
       條件：每人每週最多 <b>${r.maxDays}</b> 天、最多連上 <b>${r.maxConsec}</b> 天${r.maxStores ? `、每班最多 <b>${r.maxStores}</b> 家店` : ""}${r.capAm || r.capPm ? `、每班工作量上限 早 <b>${r.capAm || "不限"}</b>／晚 <b>${r.capPm || "不限"}</b>` : ""}${r.maxKm ? `、同一人負責的店相距 <b>${r.maxKm}</b> 公里內` : ""}
       <a href="#" data-act="goSettings">修改條件</a><br>
-      ${noXY ? `<span style="color:var(--warn)">有 ${noXY} 家門市還沒有座標，分配時無法依距離分組（會照門市列表的順序分）。<a href="#" data-act="goStores">去補座標</a></span>` : "所有門市都有座標，會把距離近的店分給同一個人。"}
+      ${noXY ? `<span style="color:var(--warn)">有 ${noXY} 家門市還沒定位，分配時無法依距離分組（會照門市列表的順序分）。<a href="#" data-act="goStores">去定位</a></span>` : "所有門市都已定位，會把距離近的店分給同一個人。"}
     </div></div>`;
   if (!p) return setup + `<div class="card muted">按「產生班表」後，這裡會先顯示預覽，確認沒問題再按「確認寫入」。</div>`;
   const days = range(p.start, p.days);
@@ -513,9 +514,9 @@ function storesHtml() {
     <td class="muted">${i + 1}</td>
     <td><input type="text" value="${esc(s.name)}" data-ch="sName" data-id="${s.id}" style="width:90px"></td>
     <td><input type="text" value="${esc(s.addr || "")}" data-ch="sAddr" data-id="${s.id}" placeholder="地址" style="width:220px"></td>
-    <td><input type="text" value="${hasXY(s) ? `${(+s.lat).toFixed(5)},${(+s.lng).toFixed(5)}` : ""}" data-ch="sXY" data-id="${s.id}" placeholder="緯度,經度 或 Google 地圖網址" style="width:150px" class="${hasXY(s) ? "" : "warnbox"}"></td>
-    <td class="nowrap"><input type="checkbox" data-ch="sNeedAm" data-id="${s.id}" ${needs(s, "am") ? "checked" : ""}> <input type="number" min="0" step="any" value="${s.loadAm ?? ""}" placeholder="1" data-ch="sLoadAm" data-id="${s.id}" style="width:60px"></td>
-    <td class="nowrap"><input type="checkbox" data-ch="sNeedPm" data-id="${s.id}" ${needs(s, "pm") ? "checked" : ""}> <input type="number" min="0" step="any" value="${s.loadPm ?? ""}" placeholder="1" data-ch="sLoadPm" data-id="${s.id}" style="width:60px"></td>
+    <td class="ctr"><input type="checkbox" data-ch="sNeedAm" data-id="${s.id}" ${needs(s, "am") ? "checked" : ""}></td>
+    <td class="ctr"><input type="checkbox" data-ch="sNeedPm" data-id="${s.id}" ${needs(s, "pm") ? "checked" : ""}></td>
+    <td><input type="number" min="0" step="any" value="${s.load ?? s.loadAm ?? ""}" placeholder="1" data-ch="sLoad" data-id="${s.id}" style="width:80px"></td>
     <td><select data-ch="sHub" data-id="${s.id}">${hubOpts(s.hub)}</select></td>
     <td class="nowrap"><button class="btn small" data-act="sMove" data-id="${s.id}" data-n="-1">↑</button> <button class="btn small" data-act="sMove" data-id="${s.id}" data-n="1">↓</button> <button class="btn small danger" data-act="sDel" data-id="${s.id}">刪</button></td></tr>`).join("");
   const noXY = list.filter(s => !hasXY(s) && s.addr).length;
@@ -527,14 +528,14 @@ function storesHtml() {
       <button class="btn" data-act="storeTpl">下載範本</button>
       <button class="btn" data-act="storePaste">批次貼上門市…</button>
       <span class="spacer"></span>
-      <button class="btn" data-act="geocode" ${noXY ? "" : "disabled"}>依地址自動找座標${noXY ? `（${noXY} 家）` : ""}</button>
+      <button class="btn" data-act="geocode" ${noXY ? "" : "disabled"} title="用地址算出各店位置，自動排班才能把距離近的店分給同一個人">${noXY ? `依地址定位門市（${noXY} 家未定位）` : "門市都已定位 ✓"}</button>
     </div>
-    <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>座標</th><th>早班要排／工作量</th><th>晚班要排／工作量</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
+    <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>早班要排</th><th>晚班要排</th><th>工作量（整天）</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
-      <b>座標</b>用來把距離近的店分給同一個人。可以按「依地址自動找座標」，找不到的話在 Google 地圖對門市按右鍵，複製「緯度, 經度」貼到座標欄（也可以直接貼 Google 地圖網址）。<br>
-      <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、座標、早班要排、早班工作量、晚班要排、晚班工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
-      <b>工作量</b>是自動排班平均分配的依據，單位自訂（例如包裹量、預估分鐘），沒填當 1。取消勾選＝這個班別不用排這家店。<br>
-      列表順序也是分組依據：沒有座標時，會照順序把相鄰的店分給同一個人。</p></div>`;
+      <b>定位</b>：按「依地址定位門市」，系統會用地址算出每家店的位置，自動排班時把距離近的店分給同一個人。<br>
+      <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、早班要排、晚班要排、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
+      <b>工作量</b>填整天的量（例如每日平均包裹量），自動排班會依這個平均分配，沒填當 1。取消勾選＝這個班別不用排這家店。<br>
+      列表順序也是分組依據：門市還沒定位時，會照順序把相鄰的店分給同一個人。</p></div>`;
 }
 
 /* ---------- 畫休（主管端） ---------- */
@@ -599,7 +600,7 @@ function settingsHtml() {
         ${num("maxStores", "每人每班最多負責幾家店", "")}
         ${num("capAm", "早班每人工作量上限", "門市工作量加總不超過這個數")}
         ${num("capPm", "晚班每人工作量上限", "")}
-        ${num("maxKm", "同一人負責的店最遠相距幾公里", "需要門市座標")}
+        ${num("maxKm", "同一人負責的店最遠相距幾公里", "門市要先定位")}
       </div>
       <p class="muted small">沒填＝不限。工作量上限沒填時，會把當天的工作量平均分給可以上班的人。</p></div>
   </div><div>
@@ -710,6 +711,7 @@ const CH = {
   sXY: t => { const xy = parseXY(t.value); if (t.value.trim() && !xy) { toast("看不懂這個座標，請貼「緯度,經度」或 Google 地圖網址"); return; } patchStore(t.dataset.id, xy || { lat: null, lng: null }); },
   sNeedAm: t => patchStore(t.dataset.id, { needAm: t.checked }),
   sNeedPm: t => patchStore(t.dataset.id, { needPm: t.checked }),
+  sLoad: t => patchStore(t.dataset.id, { load: t.value === "" ? null : +t.value, loadAm: null, loadPm: null }),
   sLoadAm: t => patchStore(t.dataset.id, { loadAm: t.value === "" ? null : +t.value }),
   sLoadPm: t => patchStore(t.dataset.id, { loadPm: t.value === "" ? null : +t.value }),
   sHub: t => patchStore(t.dataset.id, { hub: t.value }),
@@ -848,16 +850,16 @@ function openEmpStores(eid) {
 // 批次貼上門市：門市名稱、地址、早班工作量、晚班工作量（Excel 直接複製）
 function openStorePaste() {
   const m = openModal(`<h2>批次貼上門市・${esc(hubBy(S.hub)?.name)}</h2>
-    <div class="sub">從 Excel 複製貼上，一行一家。欄位：<b>門市名稱</b>、<b>地址</b>、<b>早班工作量</b>、<b>晚班工作量</b>（後面幾欄可以不填）。第一行是標題也沒關係。<br>同名的門市會更新地址和工作量。</div>
-    <textarea id="spText" style="min-height:180px" placeholder="福壽\t新北市新莊區福壽街1號\t30\t20"></textarea>
+    <div class="sub">從 Excel 複製貼上，一行一家。欄位：<b>門市名稱</b>、<b>地址</b>、<b>工作量（整天）</b>（後面幾欄可以不填）。第一行是標題也沒關係。<br>同名的門市會更新地址和工作量。</div>
+    <textarea id="spText" style="min-height:180px" placeholder="福壽\t新北市新莊區福壽街1號\t3649"></textarea>
     <div id="spPrev" class="small muted" style="margin-top:6px"></div>
     <div class="actions"><button class="btn" data-x="check">試算看看</button><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">套用</button></div>`);
   const parse = () => {
     const lines = m.querySelector("#spText").value.split("\n").map(l => l.split(/\t|,|，/).map(x => x.trim())).filter(c => c[0]);
-    let col = { name: 0, addr: 1, am: 2, pm: 3 };
+    let col = { name: 0, addr: 1, am: 2, pm: -1 };
     if (lines[0] && lines[0].some(c => /門市|店名|名稱/.test(c))) {
       const h = lines.shift(), f = re => h.findIndex(c => re.test(c));
-      col = { name: f(/門市|店名|名稱/), addr: f(/地址/), am: f(/早/), pm: f(/晚/) };
+      col = { name: f(/門市|店名|名稱/), addr: f(/地址/), am: f(/量/), pm: -1 };
     }
     return lines.map(c => ({ name: c[col.name] || "", addr: col.addr >= 0 ? c[col.addr] || "" : "", loadAm: col.am >= 0 && c[col.am] !== "" && c[col.am] != null ? +c[col.am] : null, loadPm: col.pm >= 0 && c[col.pm] !== "" && c[col.pm] != null ? +c[col.pm] : null })).filter(r => r.name);
   };
@@ -870,8 +872,8 @@ function openStorePaste() {
     if (b.dataset.x === "go") {
       if (!rows.length) return toast("沒有讀到門市");
       const clean = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== "" && !Number.isNaN(v)));
-      const list = stores().map(s => { const r = p.upd.find(x => x.name === s.name); return r ? { ...s, ...clean({ addr: r.addr, loadAm: r.loadAm, loadPm: r.loadPm }) } : s; });
-      for (const r of p.add) list.push({ id: uid("s"), hub: S.hub, ...clean(r) });
+      const list = stores().map(s => { const r = p.upd.find(x => x.name === s.name); return r ? { ...s, ...clean({ addr: r.addr, load: r.loadAm }) } : s; });
+      for (const r of p.add) list.push({ id: uid("s"), hub: S.hub, ...clean({ name: r.name, addr: r.addr, load: r.loadAm }) });
       await saveMaster({ stores: list }); closeModal(); toast(`已新增 ${p.add.length} 家、更新 ${p.upd.length} 家`);
     }
   };
@@ -880,7 +882,7 @@ function openStorePaste() {
    欄位（順序不拘，看標題）：主要門市、門市名稱、地址、座標（或 緯度／經度）、早班工作量、晚班工作量、早班要排、晚班要排
    沒有「主要門市」欄 → 全部放到目前選的主要門市；有寫但系統沒有 → 自動新增那間主要門市 */
 const STORE_COLS = { hub: /主要門市|母店/, name: /門市名稱|店名|^門市$|名稱/, addr: /地址/, xy: /座標/, lat: /緯度|lat/i, lng: /經度|lng|lon/i,
-  loadAm: /早.*(工作量|量)/, loadPm: /晚.*(工作量|量)/, needAm: /早.*(要排|需排|排班)/, needPm: /晚.*(要排|需排|排班)/ };
+  load: /^(每日|整天|全天|日)?(平均)?工作量|^W\d*平均|^平均/i, loadAm: /早.*(工作量|量)/, loadPm: /晚.*(工作量|量)/, needAm: /早.*(要排|需排|排班)/, needPm: /晚.*(要排|需排|排班)/ };
 function storeRowsFromAoa(aoa) {
   const hi = aoa.findIndex(r => (r || []).some(c => STORE_COLS.name.test(String(c ?? "").trim())));
   if (hi < 0) return null;
@@ -893,7 +895,7 @@ function storeRowsFromAoa(aoa) {
     const name = String(g("name") ?? "").trim(); if (!name) return null;
     const xy = parseXY(g("xy")) || (num(g("lat")) != null && num(g("lng")) != null ? { lat: num(g("lat")), lng: num(g("lng")) } : null);
     return { hubName: String(g("hub") ?? "").trim(), name, addr: String(g("addr") ?? "").trim(), ...(xy || {}),
-      loadAm: num(g("loadAm")), loadPm: num(g("loadPm")),
+      load: num(g("load")) ?? num(g("loadAm")) ?? num(g("loadPm")),
       needAm: col.needAm >= 0 && String(g("needAm") ?? "").trim() !== "" ? yes(g("needAm")) : null,
       needPm: col.needPm >= 0 && String(g("needPm") ?? "").trim() !== "" ? yes(g("needPm")) : null };
   }).filter(Boolean);
@@ -909,9 +911,8 @@ async function importStoreFile(file) {
     const exist = r => stores().find(s => s.name === r.name);
     const m = openModal(`<h2>匯入門市</h2><div class="sub">檔案：${esc(file.name)}・讀到 <b>${rows.length}</b> 家（新增 ${rows.filter(r => !exist(r)).length}、更新 ${rows.filter(exist).length}）
       ${newHubs.length ? `<br>會新增主要門市：<b>${newHubs.map(esc).join("、")}</b>` : ""}${rows.some(r => !r.hubName) ? `<br>沒寫主要門市的放到「${esc(curHub)}」` : ""}</div>
-      <div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>座標</th><th>早班</th><th>晚班</th><th></th></tr>
-      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td class="small">${r.lat != null ? "✓" : '<span class="muted">—</span>'}</td>
-        <td>${r.needAm === false ? '<span class="muted">不排</span>' : r.loadAm ?? ""}</td><td>${r.needPm === false ? '<span class="muted">不排</span>' : r.loadPm ?? ""}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>
+      <div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>早班</th><th>晚班</th><th>工作量</th><th></th></tr>
+      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td>${r.needAm === false ? '<span class="muted">不排</span>' : "排"}</td><td>${r.needPm === false ? '<span class="muted">不排</span>' : "排"}</td><td>${r.load ?? ""}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>
       <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">匯入</button></div>`);
     m.onclick = async ev => {
       const b = ev.target.closest("button"); if (!b) return;
@@ -923,7 +924,7 @@ async function importStoreFile(file) {
       const clean = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
       const list = [...stores()];
       for (const r of rows) {
-        const patch = clean({ hub: hubId(r.hubName), addr: r.addr, lat: r.lat, lng: r.lng, loadAm: r.loadAm, loadPm: r.loadPm, needAm: r.needAm, needPm: r.needPm });
+        const patch = clean({ hub: hubId(r.hubName), addr: r.addr, lat: r.lat, lng: r.lng, load: r.load, needAm: r.needAm, needPm: r.needPm });
         const i = list.findIndex(s => s.name === r.name);
         if (i >= 0) list[i] = { ...list[i], ...patch }; else list.push({ id: uid("s"), name: r.name, ...patch });
       }
@@ -934,11 +935,11 @@ async function importStoreFile(file) {
 }
 async function storeTemplate() {
   const X = await loadXLSX(), wb = X.utils.book_new();
-  const rows = [["主要門市", "門市名稱", "地址", "座標", "早班要排", "早班工作量", "晚班要排", "晚班工作量"]];
-  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).map(s => [h.name, s.name, s.addr || "", hasXY(s) ? `${s.lat},${s.lng}` : "", needs(s, "am") ? "是" : "否", s.loadAm ?? "", needs(s, "pm") ? "是" : "否", s.loadPm ?? ""]))
-    : [[hubBy(S.hub)?.name || "新莊榮華", "範例門市", "新北市新莊區○○路1號", "25.0330,121.4450", "是", 30, "是", 20]];
+  const rows = [["主要門市", "門市名稱", "地址", "早班要排", "晚班要排", "工作量"]];
+  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).map(s => [h.name, s.name, s.addr || "", needs(s, "am") ? "是" : "否", needs(s, "pm") ? "是" : "否", s.load ?? s.loadAm ?? ""]))
+    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", "是", "是", 1500]];
   const ws = X.utils.aoa_to_sheet([...rows, ...list]);
-  ws["!cols"] = [10, 12, 30, 20, 8, 10, 8, 10].map(w => ({ wch: w }));
+  ws["!cols"] = [12, 12, 36, 9, 9, 10].map(w => ({ wch: w }));
   X.utils.book_append_sheet(wb, ws, "門市");
   X.writeFile(wb, `門市匯入範本_${S.reg?.name || ""}.xlsx`);
 }
@@ -949,8 +950,8 @@ async function geocodeAll() {
   if (!list.length) return;
   let ok = 0, fail = [];
   for (const [i, s] of list.entries()) {
-    toast(`找座標中… ${i + 1}/${list.length}`);
-    const tries = [s.addr, s.addr.replace(/(\d+)號.*$/, "$1號"), s.addr.replace(/[\d\-之]+號.*$/, "")];
+    toast(`定位中… ${i + 1}/${list.length}`);
+    const tries = [s.addr.replace(/\d+[、,]?\d*樓.*$/, ""), s.addr.replace(/(\d+)號.*$/, "$1號"), s.addr.replace(/[\d\-之]+號.*$/, "")];
     let hit = null;
     for (const q of [...new Set(tries)]) {
       try {
@@ -959,12 +960,19 @@ async function geocodeAll() {
       } catch {}
       await new Promise(r => setTimeout(r, 1100));
     }
-    if (hit) { ok++; await patchStore(s.id, hit); } else fail.push(s.name);
+    if (hit) { ok++; await patchStore(s.id, hit); } else fail.push(s);
     await new Promise(r => setTimeout(r, 1100));
   }
-  openModal(`<h2>找座標完成</h2><div class="sub">找到 ${ok} 家${fail.length ? `，<b>${fail.length} 家找不到</b>：${fail.map(esc).join("、")}` : ""}</div>
-    ${fail.length ? `<p class="small">找不到的請在 Google 地圖搜尋門市 → 在位置上按右鍵 → 點第一行的「緯度, 經度」就會複製 → 貼到座標欄。</p>` : ""}
-    <div class="actions"><span class="spacer"></span><button class="btn primary" onclick="document.getElementById('modalRoot').innerHTML=''">知道了</button></div>`);
+  const m = openModal(`<h2>定位完成</h2><div class="sub">找到 ${ok} 家${fail.length ? `，<b>${fail.length} 家找不到</b>` : ""}</div>
+    ${fail.length ? `<p class="small">找不到的店：在 Google 地圖搜尋那家店 → 對位置按右鍵 → 點第一行的數字（會複製「緯度, 經度」）→ 貼到下面，或直接貼 Google 地圖網址。</p>
+      <table class="list">${fail.map(f => `<tr><td>${esc(f.name)}</td><td class="small muted">${esc(f.addr)}</td><td><input type="text" data-fix="${f.id}" placeholder="貼上緯度,經度" style="width:180px"></td></tr>`).join("")}</table>` : ""}
+    <div class="actions"><span class="spacer"></span><button class="btn primary" data-x="ok">${fail.length ? "儲存" : "知道了"}</button></div>`);
+  m.querySelector("[data-x=ok]").onclick = async () => {
+    const fix = {};
+    for (const i of m.querySelectorAll("[data-fix]")) { const xy = parseXY(i.value); if (i.value.trim() && !xy) return toast("「" + storeBy(i.dataset.fix).name + "」看不懂，請貼「緯度,經度」或 Google 地圖網址"); if (xy) fix[i.dataset.fix] = xy; }
+    if (Object.keys(fix).length) await saveMaster({ stores: stores().map(s => fix[s.id] ? { ...s, ...fix[s.id] } : s) });
+    closeModal();
+  };
 }
 
 /* ================= 匯出／備份 ================= */
