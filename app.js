@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v37";
+const APP_VER = "v38";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -1273,8 +1273,10 @@ function take(t){try{var j=JSON.parse(t),d=j&&j.Data;if(!Array.isArray(d)||!d.le
 var of=window.fetch;if(of)window.fetch=function(){return of.apply(this,arguments).then(function(r){try{r.clone().text().then(take)}catch(e){}return r})};
 var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){this.addEventListener('load',function(){try{if(!this.responseType||this.responseType==='text')take(this.responseText);else if(this.responseType==='json')take(JSON.stringify(this.response))}catch(e){}});return os.apply(this,arguments)};
 var b=Z.box=document.createElement('div');b.style.cssText='position:fixed;top:12px;right:12px;z-index:2147483647;background:#fff;border:2px solid #2563eb;border-radius:12px;padding:14px 16px;width:300px;font:14px/1.6 sans-serif;color:#1f2937;box-shadow:0 8px 30px rgba(0,0,0,.25)';
-b.innerHTML='<b style="font-size:15px">📥 匯入排班網站</b><div id="zqm" style="margin:6px 0 10px">請<b>勾一下（或取消）「含轄下」</b>，讓名單重新載入一次。</div><button id="zqg" disabled style="background:#2563eb;color:#fff;border:0;border-radius:8px;padding:6px 12px;opacity:.5">送到排班網站</button> <button id="zqt" style="border:1px solid #ccc;background:#fff;border-radius:8px;padding:6px 10px">只用畫面文字</button> <a href="#" id="zqx" style="float:right;color:#888">關閉</a>';
+b.innerHTML='<b style="font-size:15px">📥 匯入排班網站</b><div id="zqm" style="margin:6px 0 10px">正在重新載入名單…<br>幾秒後沒有出現人數的話，請按頁面上方藍色的<b>放大鏡 🔍</b>。</div><button id="zqg" disabled style="background:#2563eb;color:#fff;border:0;border-radius:8px;padding:6px 12px;opacity:.5">送到排班網站</button> <button id="zqt" style="border:1px solid #ccc;background:#fff;border-radius:8px;padding:6px 10px">只用畫面文字</button> <a href="#" id="zqx" style="float:right;color:#888">關閉</a>';
 document.body.appendChild(b);
+function again(){var ins=[].slice.call(document.querySelectorAll('input'));var inp=ins.filter(function(i){var t=(i.placeholder||'')+' '+(i.getAttribute('aria-label')||'')+' '+((i.closest&&i.closest('div')&&i.closest('div').innerText)||'');return /工號|姓名/.test(t)})[0];var bs=[].slice.call(document.querySelectorAll('button,[role=button]')).filter(function(x){return !Z.box.contains(x)});var sb=bs.filter(function(x){return /search|搜尋|查詢/i.test((x.innerText||'')+' '+(x.className||'')+' '+(x.getAttribute('aria-label')||'')+' '+(x.title||''))})[0];if(!sb&&inp){var r=inp.getBoundingClientRect(),cx=(r.left+r.right)/2,cy=(r.top+r.bottom)/2,d=function(x){var q=x.getBoundingClientRect();return Math.hypot((q.left+q.right)/2-cx,(q.top+q.bottom)/2-cy)};sb=bs.filter(function(x){var q=x.getBoundingClientRect();return q.width>0&&q.width<140&&d(x)<r.width+200}).sort(function(x,y){return d(x)-d(y)})[0]}if(sb){sb.click()}else if(inp){['keydown','keypress','keyup'].forEach(function(k){inp.dispatchEvent(new KeyboardEvent(k,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}))})}}
+setTimeout(again,300);
 function upd(){var n=Object.keys(got).length;b.querySelector('#zqm').innerHTML='已讀到 <b>'+n+'</b> 人（含工號）。<br>名單如果要往下捲才會載入更多，捲到底再按送出。';var g=b.querySelector('#zqg');g.disabled=false;g.style.opacity=1}
 function send(p){var w=window.open(S+'#apollo='+encodeURIComponent(JSON.stringify(p)),'_blank');if(!w)alert('瀏覽器擋住了新分頁，請允許彈出視窗後再按一次。')}
 b.querySelector('#zqg').onclick=function(){var l=[];for(var k in got)l.push(got[k]);send({v:3,from:location.host,people:l})};
@@ -1291,7 +1293,7 @@ function openApolloHelp() {
     <ol class="small" style="padding-left:20px;line-height:1.8">
       <li>登入 Apollo，打開「我的部屬」。</li>
       <li>在 <b>Apollo 那一頁</b>點書籤列的「📥 Apollo→排班」，右上角會出現小框。</li>
-      <li>照小框說的<b>勾一下（或取消）「含轄下」</b>，小框顯示「已讀到 N 人」後按「送到排班網站」→ 預覽 → 「直接匯入」。</li></ol>
+      <li>小書籤會自動重新載入名單（等於幫你按一下藍色放大鏡 🔍）。小框顯示「已讀到 N 人」後按「送到排班網站」→ 預覽 → 「直接匯入」。<br>幾秒後還沒有人數，就自己按一下 Apollo 上方的<b>藍色放大鏡 🔍</b>。</li></ol>
     <p class="small muted">小書籤只記下名單上的姓名、工號、部門、職稱，不會讀取或傳送你的 Apollo 帳號密碼。</p>
     <div class="actions"><span class="spacer"></span><button class="btn" data-x="close">關閉</button></div>`);
   m.querySelector("#apolloBm").onclick = e => { e.preventDefault(); toast("請把這顆按鈕拖到書籤列，不是在這裡點"); };
