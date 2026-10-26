@@ -29,4 +29,10 @@ regions/{rid}/leave/{ym_員工id}  員工送出的畫休
 `firebase-config.js` 的 firebaseConfig 改成 `null` 就是本機試用模式（資料存在瀏覽器）。
 
 ## 發新版要改的地方
-`app.js` 的 `APP_VER`、`index.html` 的 `app.js?v=`、`version.json` 三個一起改成同一個版本號。網站打開時會比對 version.json，版本不同就自動重新載入，使用者不用手動強制重新整理。
+
+執行 `node tools/bump.mjs`（改了樣式就加 `--css`）。它會一次把 `app.js` 的 `APP_VER`、`index.html` 的 `app.js?v=`、`version.json` 改成同一個版本號，並檢查三處一致。網站打開時會比對 version.json，版本不同就自動重新載入，使用者不用手動強制重新整理。
+
+## 自動排班條件（設定頁）
+
+- 每週最多天數、最多連續天數：留空或填 0＝不限（每週最多 7 天）。人員表可以個別設定每週天數。
+- 晚班隔天接早班：不是硬限制，只是排班時扣分盡量避開；班表合計欄的 ⚠ 會標出超過每週／連續上限、或晚接早的人。

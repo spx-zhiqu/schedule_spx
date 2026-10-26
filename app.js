@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v39";
+const APP_VER = "v40";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -45,6 +45,9 @@ const isAdmin = () => isOwner() || (!!S.user && (S.reg?.admins || []).includes(S
 const M = () => S.master || { hubs: [], stores: [], rules: DEFAULT_RULES };
 // 每人每班最多 2 家店（沒填或填 0 也當 2）
 const rules = () => { const r = { ...DEFAULT_RULES, ...(M().rules || {}) }; if (!(+r.maxStores > 0)) r.maxStores = 2; return r; };
+// 每週上班天數上限／連續上班天數上限：沒填或填 0＝不限（每週最多 7 天、連續不限）
+const weekCap = e => { const v = +e?.maxDays > 0 ? +e.maxDays : +rules().maxDays > 0 ? +rules().maxDays : 7; return Math.min(7, v); };
+const consecCap = () => +rules().maxConsec > 0 ? +rules().maxConsec : Infinity;
 const hubs = () => M().hubs || [];
 const hubBy = id => hubs().find(h => h.id === id);
 const stores = () => M().stores || [];
@@ -121,7 +124,6 @@ async function init() {
   $("#topCtl").onclick = onTopClick;
   main.onclick = onClick;
   main.onchange = onChange;
-  main.oninput = onInput;
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 }
 function stopAll() {
@@ -325,15 +327,26 @@ function personRows(list, days, src, changed) {
 }
 function personRows1(list, days, src, changed) {
   return list.map(e => {
-    let work = 0, cnt = 0;
+    let work = 0, cnt = 0, run = 0, maxRun = 0, tightN = 0, prevS = null;
+    const wk = {};
     const tds = days.map(d => {
       const c = src(d.ds, e.id), av = avOf(d.ds, e.id);
+      const on = c && c.s && c.s !== "off";
+      run = on ? run + 1 : 0; maxRun = Math.max(maxRun, run);
+      if (on) { const w = mondayOf(d.ds); wk[w] = (wk[w] || 0) + 1; }
+      if (on && c.s === "am" && prevS === "pm") tightN++;
+      prevS = on ? c.s : null;
       if (c && c.s !== "off") { work++; cnt += (c.st || []).length; }
       const bad = av && c && c.s !== "off" && avBad(av, c.s);
       const ch = changed && changed(d.ds, e.id);
       return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av)}</td>`;
     }).join("");
-    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? ` <span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot">${work}天<br><span class="small">${cnt}店次</span></td></tr>`;
+    // 提醒：超過每週天數上限、連續上班太久、晚班隔天接早班（只是標示，不會擋）
+    const warn = [], wkOver = Object.values(wk).filter(n => n > weekCap(e)).length;
+    if (wkOver) warn.push(`${wkOver} 週超過每週 ${weekCap(e)} 天`);
+    if (maxRun > consecCap()) warn.push(`連續上班 ${maxRun} 天（上限 ${consecCap()}）`);
+    if (tightN) warn.push(`${tightN} 次晚班隔天接早班`);
+    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? ` <span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span></td></tr>`;
   }).join("");
 }
 function missRow(days, src) {
@@ -360,7 +373,7 @@ function gridHtml() {
     ${missRow(days, cell)}</thead>
     <tbody>${personRows(list, days, cell) || `<tr><td class="sticky" style="padding:20px" colspan="${days.length + 2}">這間主要門市還沒有人員，請到「人員」新增或從 Apollo 匯入。</td></tr>`}</tbody>
   </table></div>
-  <div class="legend" style="margin-top:8px"><span><i style="background:#e0f2fe;border-left:4px solid #0284c7"></i>☀️ 早班</span><span><i style="background:#ede9fe;border-left:4px solid #7c3aed"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
+  <div class="legend" style="margin-top:8px"><span><i style="background:#e0f2fe;border-left:4px solid #0284c7"></i>☀️ 早班</span><span><i style="background:#ede9fe;border-left:4px solid #7c3aed"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span><span style="color:#b45309">⚠ 合計欄＝超過每週／連續上限，或晚班隔天接早班</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
 }
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
@@ -386,7 +399,7 @@ function autoHtml() {
     <div class="small muted" style="margin-top:10px;line-height:1.8">
       這間主要門市：門市 <b>${st.filter(needs).length}</b> 家（早晚都要排）・可排人員 <b>${people.length}</b> 人
       （只上早班 ${people.filter(e => e.shift === "am").length}、只上晚班 ${people.filter(e => e.shift === "pm").length}、早晚都可 ${people.filter(e => !e.shift || e.shift === "any").length}）<br>
-      條件：每人每週最多 <b>${r.maxDays}</b> 天、最多連上 <b>${r.maxConsec}</b> 天${r.maxStores ? `、每班最多 <b>${r.maxStores}</b> 家店` : ""}${r.capAm || r.capPm ? `、每班工作量上限 早 <b>${r.capAm || "不限"}</b>／晚 <b>${r.capPm || "不限"}</b>` : ""}${r.maxKm ? `、同一人負責的店相距 <b>${r.maxKm}</b> 公里內` : ""}
+      條件：每人每週最多 <b>${weekCap()}</b> 天、最多連上 <b>${consecCap() === Infinity ? "不限" : consecCap()}</b> 天${r.maxStores ? `、每班最多 <b>${r.maxStores}</b> 家店` : ""}${r.capAm || r.capPm ? `、每班工作量上限 早 <b>${r.capAm || "不限"}</b>／晚 <b>${r.capPm || "不限"}</b>` : ""}${r.maxKm ? `、同一人負責的店相距 <b>${r.maxKm}</b> 公里內` : ""}
       <a href="#" data-act="goSettings">修改條件</a><br>
       ${noXY ? `<span class="muted">有 ${noXY} 家門市還沒算出位置，這幾家會照門市列表的順序和相鄰的店排在一起。</span>` : "所有門市都已定位，會把距離近的店分給同一個人。"}
     </div></div>`;
@@ -486,19 +499,19 @@ function autoPlan() {
         if (used.has(e.id)) return false;
         if (e.shift && e.shift !== "any" && e.shift !== sh) return false;
         const av = avOf(ds, e.id); if (av && avBad(av, sh)) return false;
-        if (daysInWeek(e.id, ds) >= (+e.maxDays || r.maxDays)) return false;
-        if (streak(e.id, ds) >= r.maxConsec) return false;
+        if (daysInWeek(e.id, ds) >= weekCap(e)) return false;
+        if (streak(e.id, ds) >= consecCap()) return false;
         return true;
       });
       // 一天要用幾個人：讓大家的上班天數平均攤在一週 7 天（早晚都可的人兩班各算一半）
       const pool = people.filter(e => !e.shift || e.shift === "any" || e.shift === sh);
       const wt = e => (e.shift === sh ? 1 : 0.5) * (isHelper.has(e.id) ? 0.5 : 1);
-      const slots = pool.reduce((n, e) => n + (+e.maxDays || r.maxDays) / 7 * wt(e), 0);
+      const slots = pool.reduce((n, e) => n + weekCap(e) / 7 * wt(e), 0);
       const target = Math.max(1, Math.min(cand.length, Math.round(slots)));
       let routes = buildRoutes(need, sh, target);
       // 人手不夠時，把這週剩下的上班天數平均攤到剩下的每一天（避免平日排滿、週末全空）
       const wd = (fromDs(ds).getDay() + 6) % 7, daysLeft = 7 - wd;
-      const left = pool.reduce((n, e) => n + Math.max(0, (+e.maxDays || r.maxDays) - daysInWeek(e.id, ds)) * wt(e), 0);
+      const left = pool.reduce((n, e) => n + Math.max(0, weekCap(e) - daysInWeek(e.id, ds)) * wt(e), 0);
       const quota = Math.max(1, Math.ceil(left / daysLeft - 1e-9));
       if (routes.length > quota) routes = routes.slice(0, quota);
       for (const rt of routes) {
@@ -508,7 +521,10 @@ function autoPlan() {
           if (used.has(e.id)) continue;
           if (!ids.every(id => canGo(e, id))) continue;
           const last = lastStores(e.id, ds, sh);
-          const score = -10 * daysInWeek(e.id, ds) + 4 * ids.filter(id => last.includes(id)).length + (e.shift === sh ? 3 : 0) - (isHelper.has(e.id) ? 6 : 0) - 0.5 * streak(e.id, ds) + Math.random() * 0.1;
+          // 軟性避開「晚班隔天接早班」（休息間隔太短）：前一天晚班→今天早班、或明天已排早班→今天晚班，各扣分（不是硬限制，人手不夠時還是會排）
+          const prev = get(addDays(ds, -1), e.id), next = get(addDays(ds, 1), e.id);
+          const tight = (sh === "am" && prev?.s === "pm") || (sh === "pm" && next?.s === "am");
+          const score = -10 * daysInWeek(e.id, ds) + 4 * ids.filter(id => last.includes(id)).length + (e.shift === sh ? 3 : 0) - (isHelper.has(e.id) ? 6 : 0) - 0.5 * streak(e.id, ds) - (tight ? 12 : 0) + Math.random() * 0.1;
           if (score > bs) { bs = score; best = e; }
         }
         if (!best) continue;
@@ -546,7 +562,7 @@ function peopleHtml() {
     <td><input type="text" value="${esc(e.code || "")}" data-ch="eCode" data-id="${e.id}" placeholder="工號" style="width:100px"></td>
     <td><button class="btn small hubsbtn ${eHubs(e).length ? "" : "warnbox"}" data-act="eHubs" data-id="${e.id}">${esc(hubNames(e) || "未設定")}</button></td>
     <td><select data-ch="eShift" data-id="${e.id}">${[["any", "早晚都可"], ["am", "只上早班"], ["pm", "只上晚班"]].map(([k, v]) => `<option value="${k}" ${(e.shift || "any") === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
-    <td><input type="number" min="1" max="7" value="${e.maxDays || ""}" placeholder="${rules().maxDays}" data-ch="eMax" data-id="${e.id}" style="width:56px"></td>
+    <td><input type="number" min="1" max="7" value="${e.maxDays || ""}" placeholder="${weekCap()}" data-ch="eMax" data-id="${e.id}" style="width:56px"></td>
     <td><button class="btn small" data-act="eStores" data-id="${e.id}">${(e.stores || []).length ? `${e.stores.length} 家` : "不限"}</button></td>
     <td><input type="checkbox" data-ch="eAct" data-id="${e.id}" ${e.active !== false ? "checked" : ""}></td>
     <td><button class="btn small danger" data-act="eDel" data-id="${e.id}">刪</button></td></tr>`).join("");
@@ -725,7 +741,6 @@ const ACT = {
   exportX: () => exportExcel(),
   go: el => setTab(el.dataset.tab),
   goSettings: (el, e) => { e.preventDefault(); setTab("settings"); },
-  goStores: (el, e) => { e.preventDefault(); setTab("stores"); },
   autoRun: async () => {
     watchMonths();
     for (let i = 0; i < 50 && !monthsReady(neededMonths()); i++) await new Promise(r => setTimeout(r, 100));
@@ -761,7 +776,6 @@ const ACT = {
   },
   storePaste: () => openStorePaste(),
   storeTpl: () => storeTemplate(),
-  geocode: () => geocodeAll(),
   addEmp: () => {
     const name = ($("#newEmp")?.value || "").trim(), code = ($("#newEmpCode")?.value || "").trim().toUpperCase();
     if (!name) return toast("請輸入姓名");
@@ -805,12 +819,7 @@ const CH = {
   rName: t => { const nm = t.value.trim(); if (nm) S.store.set(`regions/${t.dataset.id}`, { name: nm }, true); },
   sName: t => { const nm = t.value.trim(); if (!nm || stores().some(s => s.name === nm && s.id !== t.dataset.id)) { toast("名稱空白或重複"); return render(); } patchStore(t.dataset.id, { name: nm }); },
   sAddr: t => { const id = t.dataset.id; patchStore(id, { addr: t.value.trim(), lat: null, lng: null }).then(() => setTimeout(() => autoLocate([storeBy(id)]), 500)); },
-  sXY: t => { const xy = parseXY(t.value); if (t.value.trim() && !xy) { toast("看不懂這個座標，請貼「緯度,經度」或 Google 地圖網址"); return; } patchStore(t.dataset.id, xy || { lat: null, lng: null }); },
-  sNeedAm: t => patchStore(t.dataset.id, { needAm: t.checked }),
-  sNeedPm: t => patchStore(t.dataset.id, { needPm: t.checked }),
   sLoad: t => patchStore(t.dataset.id, { load: t.value === "" ? null : +t.value, loadAm: null, loadPm: null }),
-  sLoadAm: t => patchStore(t.dataset.id, { loadAm: t.value === "" ? null : +t.value }),
-  sLoadPm: t => patchStore(t.dataset.id, { loadPm: t.value === "" ? null : +t.value }),
   sHub: t => patchStore(t.dataset.id, { hub: t.value }),
   eName: t => { const nm = t.value.trim(); if (!nm) return render(); patchEmp(t.dataset.id, { name: nm }); },
   eCode: t => patchEmp(t.dataset.id, { code: t.value.trim().toUpperCase() }),
@@ -835,7 +844,6 @@ function onClick(e) {
   if (el && ACT[el.dataset.act]) ACT[el.dataset.act](el, e);
 }
 function onChange(e) { const t = e.target; if (t.dataset.ch && CH[t.dataset.ch]) CH[t.dataset.ch](t); }
-function onInput() {}
 function openRegionLater(id) { S.pendingRid = id; const t = setInterval(() => { if (S.regions?.some(r => r.id === id)) { clearInterval(t); openRegion(id); render(); } }, 200); setTimeout(() => clearInterval(t), 8000); }
 
 /* ================= 存檔 ================= */
@@ -1072,35 +1080,6 @@ async function autoLocate(list) {
       await new Promise(r => setTimeout(r, 1100));
     }
   } finally { S.locating = false; }
-}
-async function geocodeAll() {
-  const list = storesOf(S.hub).filter(s => !hasXY(s) && s.addr);
-  if (!list.length) return;
-  let ok = 0, fail = [];
-  for (const [i, s] of list.entries()) {
-    toast(`定位中… ${i + 1}/${list.length}`);
-    const tries = [s.addr.replace(/\d+[、,]?\d*樓.*$/, ""), s.addr.replace(/(\d+)號.*$/, "$1號"), s.addr.replace(/[\d\-之]+號.*$/, "")];
-    let hit = null;
-    for (const q of [...new Set(tries)]) {
-      try {
-        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=tw&accept-language=zh-TW&q=${encodeURIComponent(q)}`);
-        const j = await r.json(); if (j[0]) { hit = { lat: +j[0].lat, lng: +j[0].lon }; break; }
-      } catch {}
-      await new Promise(r => setTimeout(r, 1100));
-    }
-    if (hit) { ok++; await patchStore(s.id, hit); } else fail.push(s);
-    await new Promise(r => setTimeout(r, 1100));
-  }
-  const m = openModal(`<h2>定位完成</h2><div class="sub">找到 ${ok} 家${fail.length ? `，<b>${fail.length} 家找不到</b>` : ""}</div>
-    ${fail.length ? `<p class="small">找不到的店：在 Google 地圖搜尋那家店 → 對位置按右鍵 → 點第一行的數字（會複製「緯度, 經度」）→ 貼到下面，或直接貼 Google 地圖網址。</p>
-      <table class="list">${fail.map(f => `<tr><td>${esc(f.name)}</td><td class="small muted">${esc(f.addr)}</td><td><input type="text" data-fix="${f.id}" placeholder="貼上緯度,經度" style="width:180px"></td></tr>`).join("")}</table>` : ""}
-    <div class="actions"><span class="spacer"></span><button class="btn primary" data-x="ok">${fail.length ? "儲存" : "知道了"}</button></div>`);
-  m.querySelector("[data-x=ok]").onclick = async () => {
-    const fix = {};
-    for (const i of m.querySelectorAll("[data-fix]")) { const xy = parseXY(i.value); if (i.value.trim() && !xy) return toast("「" + storeBy(i.dataset.fix).name + "」看不懂，請貼「緯度,經度」或 Google 地圖網址"); if (xy) fix[i.dataset.fix] = xy; }
-    if (Object.keys(fix).length) await saveMaster({ stores: stores().map(s => fix[s.id] ? { ...s, ...fix[s.id] } : s) });
-    closeModal();
-  };
 }
 
 /* ================= 匯出／備份 ================= */

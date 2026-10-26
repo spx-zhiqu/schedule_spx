@@ -357,3 +357,6 @@ table.list th{background:#fff1eb;color:#9a3412}
 .card.step .btn{padding:8px 18px;font-size:15px}
 .bad{color:var(--miss)}
 @media (max-width:860px){.topbar{gap:8px}.tabs button{padding:6px 10px;font-size:13px}}
+
+/* 班表合計欄：超過上限／連續太久／晚接早的提醒 */
+.sg td.tot.over{background:#fff7ed;color:#b45309;font-weight:700}
