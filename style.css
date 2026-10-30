@@ -360,3 +360,22 @@ table.list th{background:#fff1eb;color:#9a3412}
 
 /* 班表合計欄：超過上限／連續太久／晚接早的提醒 */
 .sg td.tot.over{background:#fff7ed;color:#b45309;font-weight:700}
+
+/* 路線 */
+.good{color:var(--ok)}
+.hint{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
+table.rt td{vertical-align:middle}
+td.num{text-align:right;white-space:nowrap}
+td.ctr{text-align:center}
+.rstores{min-width:320px}
+.rchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:3px 6px 3px 10px;margin:2px 4px 2px 0;font-size:14px;white-space:nowrap}
+.rchip i{font-style:normal;font-size:10px;border-radius:4px;padding:0 4px;font-weight:700}
+.rchip i.hd{background:#fee2e2;color:#b91c1c}
+.rchip i.nd{background:#dbeafe;color:#1d4ed8}
+.rchip i.pk{background:#f3f4f6;color:#4b5563}
+.rchip small{color:var(--muted);font-size:11px}
+.rchip a{cursor:pointer;color:var(--muted);padding:0 3px;font-size:12px}
+.rchip a:hover{color:var(--pri)}
+.rstores select{font-size:13px;padding:3px 4px}
+td.rwarn{color:#b45309;font-size:12px;min-width:120px}
+.sg .hrs{font-size:11px;color:#475569;margin-top:2px;font-weight:600}
