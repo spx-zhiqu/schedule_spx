@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v43";
+const APP_VER = "v44";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -690,7 +690,7 @@ function storesHtml() {
       <button class="btn primary" data-act="addStore">新增門市</button>
       <label class="btn primary" for="storeFile">匯入 Excel…</label>
       <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden><input type="file" id="storeFile" data-ch="storeFile" accept=".xlsx,.xls,.csv" hidden>
-      <button class="btn" data-act="storeTpl">下載範本</button>
+      <button class="btn" data-act="storeTpl" title="下載公版 Excel（門市＋路線＋不排一起，帶目前的資料）">下載公版 Excel</button>
       <button class="btn" data-act="storePaste">批次貼上門市…</button>
       <span class="spacer"></span>
     </div>
@@ -698,7 +698,7 @@ function storesHtml() {
     <p class="muted small" style="line-height:1.8">
       <b>不用 Excel 也可以</b>：下面表格的每一格（地址、workload、僅在店時數、HD／純取件／NDD／FBS／重新分配、主要門市）都能直接改，改完自動儲存。<br>
       <b>匯入營運指標週報</b>：直接選每週的門市週報檔（不用先改），會讀最新一週分頁的「僅在店」應排時數和 workload（Avg 4W），只更新對得到的門市。<br>
-      <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
+      <b>公版 Excel</b>：按「下載公版 Excel」會下載目前全部門市、路線、不排一起的設定，在 Excel 改完再按「匯入 Excel…」匯回來就會更新（只有「門市名稱」一定要有）。<br>
       <b>workload</b>填整天的量（四週平均）。<b>僅在店時數</b>填營運指標的應排時數「僅在店」（每天，四週平均）；<b>每班在店時數</b>＝僅在店 ÷ 2，沒填時用 workload ÷ 400 ÷ 2。每家店早班、晚班都會排人。<br>
       HD、純取件、NDD寄件、FBS寄件、重新分配會用在「路線」的檢查（例：晚班 NDD 店、HD 店要排第一間）。匯入「智取店_資料統整.xlsx」會一次帶入這些欄位和路線。<br>
       系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
@@ -1134,7 +1134,7 @@ function openStorePaste() {
 /* ---------- 門市 Excel 匯入 ----------
    欄位（順序不拘，看標題）：主要門市、門市名稱、地址、座標（或 緯度／經度）、早班工作量、晚班工作量、早班要排、晚班要排
    沒有「主要門市」欄 → 全部放到目前選的主要門市；有寫但系統沒有 → 自動新增那間主要門市 */
-const STORE_COLS = { hub: /主要門市|母店/, name: /門市名稱|店名|^門市$|名稱/, addr: /地址/, xy: /座標/, lat: /緯度|lat/i, lng: /經度|lng|lon/i,
+const STORE_COLS = { hub: /主要門市|母店/, name: /^(門市名稱|店名|門市|名稱)$/, addr: /地址/, xy: /座標/, lat: /緯度|lat/i, lng: /經度|lng|lon/i,
   load: /^(每日|整天|全天|日)?(平均)?工作量|^W\d*平均|^平均|^四週平均workload|^workload/i, loadAm: /早.*(工作量|量)/, loadPm: /晚.*(工作量|量)/, needAm: /早.*(要排|需排|排班)/, needPm: /晚.*(要排|需排|排班)/,
   ins: /^僅在店|在店時數/, nddCnt: /NDD寄件數|NDD打包數/i, hd: /^HD/i, pick: /純取件/, ndd: /^NDD寄件$/i, fbs: /^FBS寄件/i, rearr: /^重新分配$/ };
 function storeRowsFromAoa(aoa) {
@@ -1165,13 +1165,15 @@ async function importStoreFile(file) {
     if (kpiSheets.length) return importKpi(X, buf, kpiSheets[kpiSheets.length - 1], file.name);
     const wb = X.read(buf, { type: "array" });
     let rows = [];
-    const rts = [];
+    const rts = []; let banRows = null;
     for (const n of wb.SheetNames) {
       const aoa = X.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: false, raw: false });
+      if (/說明/.test(n)) continue;
       if (/路線/.test(n)) { rts.push(...routeRowsFromAoa(aoa, /晚/.test(n) ? "pm" : "am")); continue; }
+      if (/不排一起/.test(n)) { banRows = aoa.slice(1).map(r => [String(r?.[0] ?? "").trim(), String(r?.[1] ?? "").trim()]).filter(([a, b]) => a && b && a !== b); continue; }
       const r = storeRowsFromAoa(aoa); if (r) rows.push(...r);
     }
-    if (!rows.length && !rts.length) return toast("找不到門市資料：第一行要有「門市名稱」這個標題，可以先下載範本照著填");
+    if (!rows.length && !rts.length) return toast("找不到門市資料：第一行要有「門市名稱」這個標題，可以先下載公版 Excel 照著填");
     const rtCnt = Object.keys(RSET).map(k => [k, rts.filter(r => r.k === k).length]).filter(([, n]) => n);
     const curHub = hubBy(S.hub)?.name || "";
     const newHubs = [...new Set(rows.map(r => r.hubName).filter(h => h && !hubs().some(x => x.name === h)))];
@@ -1179,6 +1181,7 @@ async function importStoreFile(file) {
     const m = openModal(`<h2>匯入門市</h2><div class="sub">檔案：${esc(file.name)}・讀到 <b>${rows.length}</b> 家（新增 ${rows.filter(r => !exist(r)).length}、更新 ${rows.filter(exist).length}）
       ${newHubs.length ? `<br>會新增主要門市：<b>${newHubs.map(esc).join("、")}</b>` : ""}${rows.some(r => !r.hubName) ? `<br>沒寫主要門市的放到「${esc(curHub)}」` : ""}</div>
       ${rtCnt.length ? `<div class="hint"><label><input type="checkbox" id="impRt" checked> 也匯入路線：${rtCnt.map(([k, n]) => `${RSET[k]} ${n} 條`).join("、")}（會取代這幾間主要門市原本的路線）</label></div>` : ""}
+      ${banRows ? `<div class="hint"><label><input type="checkbox" id="impBan" checked> 也匯入「不排一起」：${banRows.length ? banRows.map(([a, b]) => `${esc(a)}＋${esc(b)}`).join("、") : "（空白，會清空）"}（會取代原本的設定）</label></div>` : ""}
       ${rows.length ? `<div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>workload</th><th>僅在店</th><th>服務</th><th></th></tr>
       ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td>${r.load ?? ""}</td><td>${r.ins ?? ""}</td><td class="small">${FLAGS.filter(([k]) => r[k]).map(([, v]) => v).join("、")}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>` : ""}
       <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">匯入</button></div>`);
@@ -1207,6 +1210,11 @@ async function importStoreFile(file) {
           routes[k] = [...(routes[k] || []).filter(r => !hset.has(list.find(s => s.id === r.st?.[0])?.hub || r.hub)), ...add];
         }
         patch.routes = routes; rtMsg = `、${rts.length} 條路線`;
+      }
+      if (banRows && $("#impBan")?.checked) {
+        const idOf = nm => list.find(s => s.name === nm)?.id;
+        patch.ban = banRows.map(([a, b]) => [idOf(a), idOf(b)]).filter(([a, b]) => a && b);
+        rtMsg += `、${patch.ban.length} 組不排一起`;
       }
       await saveMaster(patch); closeModal();
       toast(`已匯入 ${rows.length} 家門市${rtMsg}${newHubs.length ? `，新增 ${newHubs.length} 間主要門市` : ""}${miss.size ? `；找不到門市：${[...miss].join("、")}` : ""}`);
@@ -1274,14 +1282,29 @@ function routeRowsFromAoa(aoa, sh) {
   return out;
 }
 async function storeTemplate() {
+  // 公版：門市＋早晚班路線＋不排一起，帶目前的資料；改完直接用「匯入 Excel」匯回來
   const X = await loadXLSX(), wb = X.utils.book_new();
-  const rows = [["主要門市", "門市名稱", "地址", "工作量"]];
-  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).filter(needs).map(s => [h.name, s.name, s.addr || "", s.load ?? s.loadAm ?? ""]))
-    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", 1500]];
-  const ws = X.utils.aoa_to_sheet([...rows, ...list]);
-  ws["!cols"] = [12, 12, 36, 10].map(w => ({ wch: w }));
+  const has = v => v ? "有" : "";
+  const info = [["智取店排班系統・公版 Excel"], [""], ["改「門市」「早班路線」「晚班路線」「不排一起」這幾頁，再到網站「3. 門市」→「匯入 Excel…」選這個檔案。"],
+    ["門市：HD門市、純取件店、NDD寄件、FBS寄件、重新分配 有就填「有」，沒有留空；僅在店時數＝營運指標「應排時數_僅在店」（每天、四週平均）。"],
+    ["路線：代號 R＝早班平日、H＝早班假日、N＝晚班；門市1 先做；放在「假日」標題下面的是假日路線，晚班假日沒填就用平日。"],
+    ["匯入時可以取消勾選「也匯入路線」，就只更新門市資料。"]];
+  const w0 = X.utils.aoa_to_sheet(info); w0["!cols"] = [{ wch: 110 }]; X.utils.book_append_sheet(wb, w0, "說明");
+  const head = ["主要門市", "門市名稱", "地址", "workload", "僅在店時數", "HD門市", "純取件店", "NDD寄件", "FBS寄件", "重新分配", "NDD打包數", "每班在店時數(參考)"];
+  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).filter(needs).map(s => [h.name, s.name, s.addr || "", s.load ?? s.loadAm ?? "", s.ins ?? "", has(s.hd), has(s.pick), has(s.ndd), has(s.fbs), has(s.rearr), s.nddCnt ?? "", s.ins ? Math.round(s.ins / 2 * 100) / 100 : ""]))
+    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", 1500, 4.2, "", "", "有", "有", "", "", 2.1]];
+  const ws = X.utils.aoa_to_sheet([head, ...list]);
+  ws["!cols"] = [14, 10, 36, 10, 11, 8, 8, 8, 8, 8, 10, 14].map(w => ({ wch: w }));
   X.utils.book_append_sheet(wb, ws, "門市");
-  X.writeFile(wb, `門市匯入範本_${S.reg?.name || ""}.xlsx`);
+  const rhead = ["路線", "人數", "主要門市(參考)", "門市1(先做)", "門市2", "門市3", "門市4"];
+  const rrows = k => allRoutes(k).filter(r => (r.st || []).some(storeBy)).map(r => { const st = r.st.filter(storeBy).map(sName); return [r.code || "", +r.n || 1, hubBy(routeHub(r))?.name || "", ...st, "", "", "", ""].slice(0, 7); });
+  for (const [sh, nm] of [["am", "早班路線"], ["pm", "晚班路線"]]) {
+    const aoa = [[`${SHIFT[sh]}・平日`], rhead, ...rrows("wd_" + sh), [""], [`${SHIFT[sh]}・假日${sh === "pm" ? "（沒填就用平日）" : ""}`], rhead, ...rrows("we_" + sh)];
+    const w = X.utils.aoa_to_sheet(aoa); w["!cols"] = [9, 7, 15, 12, 12, 12, 12].map(x => ({ wch: x })); X.utils.book_append_sheet(wb, w, nm);
+  }
+  const wbn = X.utils.aoa_to_sheet([["門市A", "門市B"], ...bans().filter(([a, b]) => storeBy(a) && storeBy(b)).map(([a, b]) => [sName(a), sName(b)])]);
+  wbn["!cols"] = [{ wch: 12 }, { wch: 12 }]; X.utils.book_append_sheet(wb, wbn, "不排一起");
+  X.writeFile(wb, `智取店排班_公版_${S.reg?.name || ""}.xlsx`);
 }
 
 // 依地址找座標（OpenStreetMap，免金鑰；台灣地址不一定找得到）
