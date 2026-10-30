@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v42";
+const APP_VER = "v43";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -688,13 +688,16 @@ function storesHtml() {
     <div class="row" style="margin-bottom:10px">
       <input type="text" id="newStore" placeholder="門市名稱" style="width:110px"><input type="text" id="newStoreAddr" placeholder="地址（選填）" style="width:220px">
       <button class="btn primary" data-act="addStore">新增門市</button>
-      <label class="btn primary" for="storeFile">匯入 Excel…</label><input type="file" id="storeFile" data-ch="storeFile" accept=".xlsx,.xls,.csv" hidden>
+      <label class="btn primary" for="storeFile">匯入 Excel…</label>
+      <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden><input type="file" id="storeFile" data-ch="storeFile" accept=".xlsx,.xls,.csv" hidden>
       <button class="btn" data-act="storeTpl">下載範本</button>
       <button class="btn" data-act="storePaste">批次貼上門市…</button>
       <span class="spacer"></span>
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>workload（整天）</th><th>僅在店時數<br>（營運指標，每天）</th><th>每班<br>在店時數</th>${FLAGS.map(([, v]) => `<th>${v}</th>`).join("")}<th>NDD<br>打包數</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="15" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
+      <b>不用 Excel 也可以</b>：下面表格的每一格（地址、workload、僅在店時數、HD／純取件／NDD／FBS／重新分配、主要門市）都能直接改，改完自動儲存。<br>
+      <b>匯入營運指標週報</b>：直接選每週的門市週報檔（不用先改），會讀最新一週分頁的「僅在店」應排時數和 workload（Avg 4W），只更新對得到的門市。<br>
       <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
       <b>workload</b>填整天的量（四週平均）。<b>僅在店時數</b>填營運指標的應排時數「僅在店」（每天，四週平均）；<b>每班在店時數</b>＝僅在店 ÷ 2，沒填時用 workload ÷ 400 ÷ 2。每家店早班、晚班都會排人。<br>
       HD、純取件、NDD寄件、FBS寄件、重新分配會用在「路線」的檢查（例：晚班 NDD 店、HD 店要排第一間）。匯入「智取店_資料統整.xlsx」會一次帶入這些欄位和路線。<br>
@@ -1155,7 +1158,12 @@ function storeRowsFromAoa(aoa) {
 }
 async function importStoreFile(file) {
   try {
-    const X = await loadXLSX(), wb = X.read(await file.arrayBuffer(), { type: "array" });
+    const X = await loadXLSX(), buf = await file.arrayBuffer();
+    // 營運指標週報（分頁名稱像「智取2026_1019」）：直接讀最新一週的「僅在店」應排時數和 workload，不用先改 Excel
+    const names = X.read(buf, { type: "array", bookSheets: true }).SheetNames;
+    const kpiSheets = names.filter(n => /^智取\d{4}_\d{4}$/.test(n)).sort();
+    if (kpiSheets.length) return importKpi(X, buf, kpiSheets[kpiSheets.length - 1], file.name);
+    const wb = X.read(buf, { type: "array" });
     let rows = [];
     const rts = [];
     for (const n of wb.SheetNames) {
@@ -1204,6 +1212,53 @@ async function importStoreFile(file) {
       toast(`已匯入 ${rows.length} 家門市${rtMsg}${newHubs.length ? `，新增 ${newHubs.length} 間主要門市` : ""}${miss.size ? `；找不到門市：${[...miss].join("、")}` : ""}`);
     };
   } catch (e) { toast("讀取失敗：" + e.message); }
+}
+/* ---------- 營運指標週報匯入 ---------- */
+function kpiFromAoa(aoa) {
+  const top = aoa.slice(0, 15), find = re => { for (let r = 0; r < top.length; r++) for (let c = 0; c < (top[r] || []).length; c++) if (re.test(String(top[r][c] ?? ""))) return [r, c]; return null; };
+  const avgCol = hit => { if (!hit) return -1; for (let r = hit[0]; r < top.length; r++) for (let c = hit[1]; c < hit[1] + 8; c++) if (/^Avg\s*4W/i.test(String(top[r]?.[c] ?? "").trim())) return c; return -1; };
+  const insC = avgCol(find(/僅在店/)), wlC = avgCol(find(/^Workload|^工作量$/i));
+  if (insC < 0) return null;
+  // 門市名稱欄：「- 智取店」最多的那一欄
+  const cnt = {};
+  for (const r of aoa) (r || []).forEach((v, c) => { if (/-\s*智取店\s*$/.test(String(v ?? ""))) cnt[c] = (cnt[c] || 0) + 1; });
+  const nc = +Object.entries(cnt).sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!(nc >= 0)) return null;
+  const out = [];
+  for (const r of aoa) {
+    const raw = String(r?.[nc] ?? "").trim(); if (!/-\s*智取店$/.test(raw)) continue;
+    let nm = raw.replace(/\s*-\s*智取店$/, "").trim(), dist = "";
+    for (let c = Math.max(0, nc - 6); c < nc + 6; c++) { const v = String(r[c] ?? "").trim(); if (/^.{1,3}區$/.test(v) && nm.startsWith(v.slice(0, -1))) { dist = v; nm = nm.slice(v.length - 1); break; } }
+    const num = v => { const t = String(v ?? "").replace(/,/g, "").trim(); return t === "" || isNaN(+t) ? null : +t; };
+    out.push({ raw, nm, dist, ins: num(r[insC]), wl: wlC >= 0 ? num(r[wlC]) : null });
+  }
+  return out;
+}
+async function importKpi(X, buf, sheet, fname) {
+  const wb = X.read(buf, { type: "array", sheets: [sheet] });
+  const rows = kpiFromAoa(X.utils.sheet_to_json(wb.Sheets[sheet], { header: 1, blankrows: false, raw: true }));
+  if (!rows || !rows.length) return toast(`「${sheet}」裡找不到「僅在店」應排時數`);
+  // 同名的店可能在別的區（例：三重中興）→ 優先用大部分店所在的行政區
+  const cands = s => rows.filter(r => r.nm === s.name);
+  const dc = {}; for (const s of stores()) { const c = cands(s); if (c.length === 1) dc[c[0].dist] = (dc[c[0].dist] || 0) + 1; }
+  const mainD = Object.entries(dc).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const hit = stores().filter(needs).map(s => { const c = cands(s); return [s, c.find(r => r.dist === mainD) || c[0]]; });
+  const ok = hit.filter(([, r]) => r && r.ins != null), miss = hit.filter(([, r]) => !r || r.ins == null).map(([s]) => s.name);
+  const f = v => v == null || v === "" ? "—" : v;
+  const m = openModal(`<h2>匯入營運指標</h2><div class="sub">檔案：${esc(fname)}・分頁：<b>${esc(sheet)}</b>（最新一週）<br>
+      對到 <b>${ok.length}</b> 家門市，會更新「僅在店時數」（Avg 4W）${rows.some(r => r.wl != null) ? "和 workload（Avg 4W）" : ""}。
+      ${miss.length ? `<br><span style="color:var(--warn)">找不到資料：${miss.map(esc).join("、")}（新店還沒有資料是正常的，會保留原本的數字）</span>` : ""}</div>
+    <div class="scrollx" style="max-height:340px;overflow:auto"><table class="list"><tr><th>門市</th><th>僅在店（每天）</th><th>每班在店時數</th><th>workload</th></tr>
+      ${ok.map(([s, r]) => `<tr><td>${esc(s.name)}</td><td>${f(s.ins)} → <b>${r.ins}</b></td><td>${fmtH(r.ins / 2)}</td><td>${r.wl != null ? `${f(s.load)} → <b>${Math.round(r.wl)}</b>` : f(s.load)}</td></tr>`).join("")}</table></div>
+    <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">更新</button></div>`);
+  m.onclick = async ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    if (b.dataset.x === "cancel") return closeModal();
+    if (b.dataset.x !== "go") return;
+    const map = new Map(ok.map(([s, r]) => [s.id, r]));
+    await saveMaster({ stores: stores().map(s => { const r = map.get(s.id); return r ? { ...s, ins: r.ins, ...(r.wl != null ? { load: Math.round(r.wl), loadAm: null, loadPm: null } : {}), kpiAt: sheet } : s; }) });
+    closeModal(); toast(`已更新 ${ok.length} 家門市的僅在店時數（${sheet}）`);
+  };
 }
 // 路線表：A 欄代號（R01／H01／N01…）、B 欄人數、D～G 欄門市（第一間先做）；標題寫「假日」的區塊或 H 開頭＝假日
 function routeRowsFromAoa(aoa, sh) {
