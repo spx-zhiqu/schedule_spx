@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v41";
+const APP_VER = "v42";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -69,8 +69,8 @@ const isOff = s => s.off === true || (s.needAm === false && s.needPm === false);
 const needs = s => !isOff(s);
 // 工作量看整天（舊資料可能分早晚）
 const loadOf = s => +(s.load ?? s.loadAm ?? s.loadPm) || 1;
-// 每班跑店時數＝官方應排時數「在店＋跑店」（每天）÷ 2；沒有官方時數就用（workload ÷ 400 ＋ 0.33）÷ 2
-const shHrs = s => { if (!s) return 0; if (+s.hrs > 0) return +s.hrs / 2; const w = +(s.load ?? s.loadAm); return w > 0 ? (w / 400 + 0.33) / 2 : 0; };
+// 每班在店時數＝營運指標「僅在店」應排時數（每天）÷ 2；沒有營運指標就用 workload ÷ 400 ÷ 2
+const shHrs = s => { if (!s) return 0; if (+s.ins > 0) return +s.ins / 2; const w = +(s.load ?? s.loadAm); return w > 0 ? w / 400 / 2 : 0; };
 const fmtH = h => (Math.round(h * 100) / 100).toFixed(2);
 const FLAGS = [["hd", "HD"], ["pick", "純取件"], ["ndd", "NDD寄件"], ["fbs", "FBS寄件"], ["rearr", "重新分配"]];
 /* ---------- 路線：master.routes["wd_am"|"wd_pm"|"we_am"|"we_pm"] = [{ id, code, st:[門市id…（第一間先做）], n:人數 }] ---------- */
@@ -302,7 +302,7 @@ function homeHtml() {
     ["routes", "4. 路線", (() => { const n = ["wd_am", "wd_pm"].map(k => routesOf(k, S.hub).length); return n[0] || n[1] ? `早班 ${n[0]} 條、晚班 ${n[1]} 條（假日可另外設定）` : "還沒有路線，可以匯入「智取店_資料統整.xlsx」"; })(), true, "設定路線"],
     ["leave", "5. 畫休", lvOpen ? `${lv.ym.replace("-", " 年 ")} 月開放中・已送出 ${lvSubs} 人` : "目前沒有開放畫休", true, "畫休"],
     ["auto", "6. 自動排班", "選起始日 → 產生班表 → 預覽 → 確認寫入", ppl.length > 0 && st.length > 0, "去排班"],
-    ["grid", "7. 班表", "看整個月的班，每格顯示跑店時數，點格子可以手動改", true, "看班表"],
+    ["grid", "7. 班表", "看整個月的班，每家店旁邊顯示在店時數，點格子可以手動改", true, "看班表"],
     ["overview", "8. 漏排總覽", miss == null ? "載入中…" : miss ? `這 14 天還有 <b class="bad">${miss}</b> 店次沒人` : "這 14 天早晚班都排滿 ✓", miss === 0, "看漏排"],
   ];
   const next = !ppl.length ? "1. 人員" : !st.length ? "3. 門市" : miss ? "6. 自動排班" : "7. 班表";
@@ -346,15 +346,15 @@ function overviewHtml() {
 
 /* ---------- 班表（人 × 日期） ---------- */
 const SHICON = { am: "☀️ 早班", pm: "🌙 晚班" };
-function cellInner(c, av, h) {
+function cellInner(c, av, hs) {
   if (!c) return avTag(av);
   if (c.s === "off") return avTag(av) + `<span class="offt">休</span>`;
-  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map(id => `<span class="st">${esc(sName(id))}</span>`).join("")}</div>` + (h ? `<div class="hrs">${fmtH(h)} 小時</div>` : "") + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
+  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st">${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
 }
-// 這格的跑店時數：每家店的每班時數；同一班同一家店排了幾個人就平分
+// 這格每家店的在店時數（一間一個）：每班在店時數；同一班同一家店排了幾個人就平分
 function cellHrs(c, ds, cov) {
-  if (!c || !c.s || c.s === "off") return 0;
-  return (c.st || []).reduce((n, id) => n + shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).length), 0);
+  if (!c || !c.s || c.s === "off") return [];
+  return (c.st || []).map(id => shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).length));
 }
 const SHIFT_GROUP = [["am", "☀️ 早班人員"], ["pm", "🌙 晚班人員"], ["any", "早晚都可"]];
 function personRows(list, days, src, changed) {
@@ -377,7 +377,7 @@ function personRows1(list, days, src, changed) {
       if (c && c.s !== "off") { work++; cnt += (c.st || []).length; }
       const bad = av && c && c.s !== "off" && avBad(av, c.s);
       const ch = changed && changed(d.ds, e.id), h = cellHrs(c, d.ds, cov);
-      hrs += h;
+      hrs += h.reduce((a, x) => a + x, 0);
       return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av, h)}</td>`;
     }).join("");
     // 提醒：超過每週天數上限、連續上班太久、晚班隔天接早班（只是標示，不會擋）
@@ -385,7 +385,7 @@ function personRows1(list, days, src, changed) {
     if (wkOver) warn.push(`${wkOver} 週超過每週 ${weekCap(e)} 天`);
     if (maxRun > consecCap()) warn.push(`連續上班 ${maxRun} 天（上限 ${consecCap()}）`);
     if (tightN) warn.push(`${tightN} 次晚班隔天接早班`);
-    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? ` <span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span>${hrs ? `<br><span class="small">${fmtH(hrs)} 小時</span>` : ""}</td></tr>`;
+    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? ` <span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span>${hrs ? `<br><span class="small">在店 ${fmtH(hrs)} 小時</span>` : ""}</td></tr>`;
   }).join("");
 }
 function missRow(days, src) {
@@ -412,7 +412,7 @@ function gridHtml() {
     ${missRow(days, cell)}</thead>
     <tbody>${personRows(list, days, cell) || `<tr><td class="sticky" style="padding:20px" colspan="${days.length + 2}">這間主要門市還沒有人員，請到「人員」新增或從 Apollo 匯入。</td></tr>`}</tbody>
   </table></div>
-  <div class="legend" style="margin-top:8px"><span><i style="background:#e0f2fe;border-left:4px solid #0284c7"></i>☀️ 早班</span><span><i style="background:#ede9fe;border-left:4px solid #7c3aed"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span><span>格子下方＝這班的跑店時數（同一家店排 2 人就平分）</span><span style="color:#b45309">⚠ 合計欄＝超過每週／連續上限，或晚班隔天接早班</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
+  <div class="legend" style="margin-top:8px"><span><i style="background:#e0f2fe;border-left:4px solid #0284c7"></i>☀️ 早班</span><span><i style="background:#ede9fe;border-left:4px solid #7c3aed"></i>🌙 晚班</span><span><i style="background:#f4f5f7"></i>休</span><span>右上角小標＝員工畫休</span><span>店名旁的數字＝這家店這班的在店時數（營運指標「僅在店」÷ 2；同一家店排 2 人就平分）</span><span style="color:#b45309">⚠ 合計欄＝超過每週／連續上限，或晚班隔天接早班</span>${isAdmin() ? "<span>點格子可以修改</span>" : ""}</div>`;
 }
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
@@ -677,7 +677,7 @@ function storesHtml() {
     <td class="nowrap"><input type="text" value="${esc(s.name)}" data-ch="sName" data-id="${s.id}" style="width:90px">${isOff(s) ? ` <span class="todo" title="這家店目前不排班">不排</span> <a href="#" data-act="sOn" data-id="${s.id}" class="small">恢復排班</a>` : ""}</td>
     <td><input type="text" value="${esc(s.addr || "")}" data-ch="sAddr" data-id="${s.id}" placeholder="地址" style="width:220px"></td>
     <td><input type="number" min="0" step="any" value="${s.load ?? s.loadAm ?? ""}" placeholder="1" data-ch="sLoad" data-id="${s.id}" style="width:80px"></td>
-    <td><input type="number" min="0" step="0.01" value="${s.hrs ?? ""}" placeholder="—" data-ch="sHrs" data-id="${s.id}" style="width:70px"></td>
+    <td><input type="number" min="0" step="0.01" value="${s.ins ?? ""}" placeholder="—" data-ch="sIns" data-id="${s.id}" style="width:70px"></td>
     <td class="num"><b>${shHrs(s) ? fmtH(shHrs(s)) : "—"}</b></td>
     ${FLAGS.map(([k]) => `<td class="ctr"><input type="checkbox" data-ch="sFlag" data-k="${k}" data-id="${s.id}" ${s[k] ? "checked" : ""}></td>`).join("")}
     <td><input type="number" min="0" value="${s.nddCnt ?? ""}" placeholder="—" data-ch="sNdd" data-id="${s.id}" style="width:60px"></td>
@@ -693,10 +693,10 @@ function storesHtml() {
       <button class="btn" data-act="storePaste">批次貼上門市…</button>
       <span class="spacer"></span>
     </div>
-    <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>workload（整天）</th><th>在店＋跑店<br>（官方，每天）</th><th>每班<br>跑店時數</th>${FLAGS.map(([, v]) => `<th>${v}</th>`).join("")}<th>NDD<br>打包數</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="15" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
+    <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>workload（整天）</th><th>僅在店時數<br>（營運指標，每天）</th><th>每班<br>在店時數</th>${FLAGS.map(([, v]) => `<th>${v}</th>`).join("")}<th>NDD<br>打包數</th><th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="15" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
       <b>匯入 Excel</b>：第一行放標題「主要門市、門市名稱、地址、工作量」（只有「門市名稱」一定要有），可以按「下載範本」照著填；有門市時，範本會帶出目前全部門市，改完再匯入就會更新。<br>
-      <b>workload</b>填整天的量（四週平均）。<b>在店＋跑店</b>填官方應排時數（每天，四週平均）；<b>每班跑店時數</b>＝在店＋跑店 ÷ 2，沒填官方時數時用（workload ÷ 400 ＋ 0.33）÷ 2。每家店早班、晚班都會排人。<br>
+      <b>workload</b>填整天的量（四週平均）。<b>僅在店時數</b>填營運指標的應排時數「僅在店」（每天，四週平均）；<b>每班在店時數</b>＝僅在店 ÷ 2，沒填時用 workload ÷ 400 ÷ 2。每家店早班、晚班都會排人。<br>
       HD、純取件、NDD寄件、FBS寄件、重新分配會用在「路線」的檢查（例：晚班 NDD 店、HD 店要排第一間）。匯入「智取店_資料統整.xlsx」會一次帶入這些欄位和路線。<br>
       系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
 }
@@ -736,10 +736,10 @@ function routesHtml() {
       <span>${list.length} 條・<b>${ppl}</b> 人・每班合計 <b>${fmtH(tot)}</b> 小時・每人平均 <b>${ppl ? fmtH(tot / ppl) : "—"}</b> 小時${nWarn ? `・<b class="bad">${nWarn}</b> 條要注意` : ""}</span>
     </div>
     ${fallback ? `<div class="hint">假日還沒有設定${SHIFT[sh]}路線，自動排班會直接用平日的路線。要不同的話，按「從平日複製」再修改。</div>` : ""}
-    <div class="scrollx"><table class="list rt"><tr><th>代號</th><th>人數</th><th>門市（1 先做；◀ 往前、✕ 移出）</th><th>間數</th><th>跑店時數</th><th>每人時數</th><th>提醒</th><th></th></tr>
+    <div class="scrollx"><table class="list rt"><tr><th>代號</th><th>人數</th><th>門市（1 先做；◀ 往前、✕ 移出）</th><th>間數</th><th>在店時數</th><th>每人在店時數</th><th>提醒</th><th></th></tr>
       ${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有路線。按「新增路線」，或匯入「智取店_資料統整.xlsx」。</td></tr>`}</table></div>
     ${unrouted.length ? `<p><b class="bad">還沒排進路線的門市（${unrouted.length}）：</b>${unrouted.map(s => esc(s.name)).join("、")}<br><span class="muted small">自動排班時，這些店會照距離另外分組。</span></p>` : list.length ? `<p class="good small">這間主要門市的門市都排進路線了 ✓</p>` : ""}
-    <p class="muted small" style="line-height:1.8">跑店時數＝每家店「每班跑店時數」加總（官方在店＋跑店 ÷ 2）；每人時數＝跑店時數 ÷ 人數。<br>
+    <p class="muted small" style="line-height:1.8">在店時數＝每家店「每班在店時數」加總（營運指標僅在店 ÷ 2，店名旁的小數字）；每人在店時數＝在店時數 ÷ 人數。<br>
       提醒規則：晚班每人最多 2 間；晚班有 NDD 寄件的店、HD 店排第一間，每條最多各 1 間；下面設定的組合不排一起。只提醒，不會擋。<br>
       自動排班會照這裡的路線，把人排進每一條路線（重的路線先排）；假日沒設定就用平日的路線。</p></div>
   <div class="card"><h3>不排一起的門市</h3>
@@ -951,7 +951,7 @@ const CH = {
   sAddr: t => { const id = t.dataset.id; patchStore(id, { addr: t.value.trim(), lat: null, lng: null }).then(() => setTimeout(() => autoLocate([storeBy(id)]), 500)); },
   sLoad: t => patchStore(t.dataset.id, { load: t.value === "" ? null : +t.value, loadAm: null, loadPm: null }),
   sHub: t => patchStore(t.dataset.id, { hub: t.value }),
-  sHrs: t => patchStore(t.dataset.id, { hrs: t.value === "" ? null : +t.value }),
+  sIns: t => patchStore(t.dataset.id, { ins: t.value === "" ? null : +t.value }),
   sNdd: t => patchStore(t.dataset.id, { nddCnt: t.value === "" ? null : +t.value }),
   sFlag: t => patchStore(t.dataset.id, { [t.dataset.k]: t.checked }),
   eName: t => { const nm = t.value.trim(); if (!nm) return render(); patchEmp(t.dataset.id, { name: nm }); },
@@ -1133,7 +1133,7 @@ function openStorePaste() {
    沒有「主要門市」欄 → 全部放到目前選的主要門市；有寫但系統沒有 → 自動新增那間主要門市 */
 const STORE_COLS = { hub: /主要門市|母店/, name: /門市名稱|店名|^門市$|名稱/, addr: /地址/, xy: /座標/, lat: /緯度|lat/i, lng: /經度|lng|lon/i,
   load: /^(每日|整天|全天|日)?(平均)?工作量|^W\d*平均|^平均|^四週平均workload|^workload/i, loadAm: /早.*(工作量|量)/, loadPm: /晚.*(工作量|量)/, needAm: /早.*(要排|需排|排班)/, needPm: /晚.*(要排|需排|排班)/,
-  hrs: /^在店[+＋]跑店/, nddCnt: /NDD寄件數|NDD打包數/i, hd: /^HD/i, pick: /純取件/, ndd: /^NDD寄件$/i, fbs: /^FBS寄件/i, rearr: /^重新分配$/ };
+  ins: /^僅在店|在店時數/, nddCnt: /NDD寄件數|NDD打包數/i, hd: /^HD/i, pick: /純取件/, ndd: /^NDD寄件$/i, fbs: /^FBS寄件/i, rearr: /^重新分配$/ };
 function storeRowsFromAoa(aoa) {
   const hi = aoa.findIndex(r => (r || []).some(c => STORE_COLS.name.test(String(c ?? "").trim())));
   if (hi < 0) return null;
@@ -1150,7 +1150,7 @@ function storeRowsFromAoa(aoa) {
       load: num(g("load")) ?? num(g("loadAm")) ?? num(g("loadPm")),
       needAm: col.needAm >= 0 && String(g("needAm") ?? "").trim() !== "" ? yes(g("needAm")) : null,
       needPm: col.needPm >= 0 && String(g("needPm") ?? "").trim() !== "" ? yes(g("needPm")) : null,
-      hrs: num(g("hrs")), nddCnt: num(g("nddCnt")), ...Object.fromEntries(FLAGS.map(([k]) => [k, flag(k)(r)])) };
+      ins: num(g("ins")), nddCnt: num(g("nddCnt")), ...Object.fromEntries(FLAGS.map(([k]) => [k, flag(k)(r)])) };
   }).filter(Boolean);
 }
 async function importStoreFile(file) {
@@ -1171,8 +1171,8 @@ async function importStoreFile(file) {
     const m = openModal(`<h2>匯入門市</h2><div class="sub">檔案：${esc(file.name)}・讀到 <b>${rows.length}</b> 家（新增 ${rows.filter(r => !exist(r)).length}、更新 ${rows.filter(exist).length}）
       ${newHubs.length ? `<br>會新增主要門市：<b>${newHubs.map(esc).join("、")}</b>` : ""}${rows.some(r => !r.hubName) ? `<br>沒寫主要門市的放到「${esc(curHub)}」` : ""}</div>
       ${rtCnt.length ? `<div class="hint"><label><input type="checkbox" id="impRt" checked> 也匯入路線：${rtCnt.map(([k, n]) => `${RSET[k]} ${n} 條`).join("、")}（會取代這幾間主要門市原本的路線）</label></div>` : ""}
-      ${rows.length ? `<div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>workload</th><th>在店＋跑店</th><th>服務</th><th></th></tr>
-      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td>${r.load ?? ""}</td><td>${r.hrs ?? ""}</td><td class="small">${FLAGS.filter(([k]) => r[k]).map(([, v]) => v).join("、")}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>` : ""}
+      ${rows.length ? `<div class="scrollx" style="max-height:320px;overflow:auto"><table class="list"><tr><th>主要門市</th><th>門市</th><th>地址</th><th>workload</th><th>僅在店</th><th>服務</th><th></th></tr>
+      ${rows.map(r => `<tr><td>${esc(r.hubName || curHub)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.addr)}</td><td>${r.load ?? ""}</td><td>${r.ins ?? ""}</td><td class="small">${FLAGS.filter(([k]) => r[k]).map(([, v]) => v).join("、")}</td><td>${exist(r) ? '<span class="muted">更新</span>' : '<span style="color:var(--ok)">新增</span>'}</td></tr>`).join("")}</table></div>` : ""}
       <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">匯入</button></div>`);
     m.onclick = async ev => {
       const b = ev.target.closest("button"); if (!b) return;
@@ -1184,7 +1184,7 @@ async function importStoreFile(file) {
       const clean = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
       const list = [...stores()];
       for (const r of rows) {
-        const patch = clean({ hub: hubId(r.hubName), addr: r.addr, lat: r.lat, lng: r.lng, load: r.load, needAm: r.needAm, needPm: r.needPm, hrs: r.hrs, nddCnt: r.nddCnt, ...Object.fromEntries(FLAGS.map(([k]) => [k, r[k]])) });
+        const patch = clean({ hub: hubId(r.hubName), addr: r.addr, lat: r.lat, lng: r.lng, load: r.load, needAm: r.needAm, needPm: r.needPm, ins: r.ins, nddCnt: r.nddCnt, ...Object.fromEntries(FLAGS.map(([k]) => [k, r[k]])) });
         const i = list.findIndex(s => s.name === r.name);
         if (i >= 0) list[i] = { ...list[i], ...patch }; else list.push({ id: uid("s"), name: r.name, ...patch });
       }

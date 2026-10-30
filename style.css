@@ -378,4 +378,4 @@ td.ctr{text-align:center}
 .rchip a:hover{color:var(--pri)}
 .rstores select{font-size:13px;padding:3px 4px}
 td.rwarn{color:#b45309;font-size:12px;min-width:120px}
-.sg .hrs{font-size:11px;color:#475569;margin-top:2px;font-weight:600}
+.sg .st .hrs{margin-left:4px;font-size:11px;color:#475569;font-weight:600}
