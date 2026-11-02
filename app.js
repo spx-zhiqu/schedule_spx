@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v50";
+const APP_VER = "v51";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -109,7 +109,7 @@ function coverage(ds, sh, src) {
   const cov = {};
   for (const e of emps()) {
     const c = src ? src(ds, e.id) : cell(ds, e.id);
-    if (c && c.s === sh) for (const st of c.st || []) (cov[st] ||= []).push(e);
+    if (c && c.s === sh && !c.tr) for (const st of c.st || []) (cov[st] ||= []).push(e);
   }
   return cov;
 }
@@ -351,19 +351,25 @@ function overviewHtml() {
 
 /* ---------- 班表（人 × 日期） ---------- */
 const SHICON = { am: "☀️ 早班", pm: "🌙 晚班" };
-function cellInner(c, av, hs) {
+function cellInner(c, av, hs, ds, src, eid) {
   if (!c) return avTag(av);
   if (c.s === "off") return avTag(av) + `<span class="offt">休</span>`;
-  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st ${(c.sp || []).includes(id) ? "spt" : ""}">${(c.sp || []).includes(id) ? "支援 " : ""}${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
+  // 實習：跟帶班人員同一班，門市照帶班人員當天的班（不算人力、不分時數）
+  if (c.tr) {
+    const t = empBy(c.tr), tc = src && ds ? src(ds, c.tr) : null, ok = tc && tc.s === c.s;
+    return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="trn">🎓 實習・跟 ${esc(t?.name || "（已刪除）")}</div><div class="sts">${(ok ? tc.st : c.st || []).map(id => `<span class="st">${esc(sName(id))}</span>`).join("")}</div>${ok ? "" : `<div class="note" style="color:#b45309">帶班人員這班沒排班</div>`}` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
+  }
+  const kids = ds && src ? emps().filter(x => x.id !== eid && src(ds, x.id)?.tr === eid && src(ds, x.id)?.s === c.s) : [];
+  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st ${(c.sp || []).includes(id) ? "spt" : ""}">${(c.sp || []).includes(id) ? "支援 " : ""}${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (kids.length ? `<div class="trn">🎓 帶 ${kids.map(x => esc(x.name)).join("、")}</div>` : "") + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
 }
 // 這格每家店的在店時數（一間一個）：每班在店時數；同一班同一家店排了幾個人就平分
 function cellHrs(c, ds, cov) {
-  if (!c || !c.s || c.s === "off") return [];
+  if (!c || !c.s || c.s === "off" || c.tr) return [];
   return (c.st || []).map(id => shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).length));
 }
-const SHIFT_GROUP = [["am", "☀️ 早班人員"], ["pm", "🌙 晚班人員"], ["any", "早晚都可"]];
+const SHIFT_GROUP = [["am", "☀️ 早班人員"], ["pm", "🌙 晚班人員"], ["any", "早晚都可"], ["tr", "🎓 實習人員"]];
 function personRows(list, days, src, changed) {
-  const grp = e => e.shift === "am" || e.shift === "pm" ? e.shift : "any";
+  const grp = e => e.trainee ? "tr" : e.shift === "am" || e.shift === "pm" ? e.shift : "any";
   const groups = SHIFT_GROUP.map(([k, label]) => [k, label, list.filter(e => grp(e) === k)]).filter(g => g[2].length);
   return groups.map(([k, label, l]) => (groups.length > 1 ? `<tr class="grp grp-${k}"><td class="sticky">${label}（${l.length}）</td><td colspan="${days.length + 1}"></td></tr>` : "") + personRows1(l, days, src, changed)).join("");
 }
@@ -383,7 +389,7 @@ function personRows1(list, days, src, changed) {
       const bad = av && c && c.s !== "off" && avBad(av, c.s);
       const ch = changed && changed(d.ds, e.id), h = cellHrs(c, d.ds, cov);
       hrs += h.reduce((a, x) => a + x, 0);
-      return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av, h)}</td>`;
+      return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av, h, d.ds, src, e.id)}</td>`;
     }).join("");
     // 提醒：超過每週天數上限、連續上班太久、晚班隔天接早班（只是標示，不會擋）
     const warn = [], wkOver = Object.values(wk).filter(n => n > weekCap(e)).length;
@@ -520,9 +526,9 @@ function autoPlan() {
   const r = rules(), start = S.autoStart, n = S.autoDays, keep = S.autoKeep !== false;
   const days = range(start, n).map(d => d.ds);
   const hubStores = storesOf(S.hub);
-  const members = empsOf(S.hub).filter(e => e.active !== false);
+  const members = empsOf(S.hub).filter(e => e.active !== false && !e.trainee);
   // 別間主要門市、但在「可支援門市」勾了這裡門市的人，也可以來支援
-  const helpers = emps().filter(e => e.active !== false && !members.includes(e) && (e.stores || []).some(id => hubStores.some(s => s.id === id)));
+  const helpers = emps().filter(e => e.active !== false && !e.trainee && !members.includes(e) && (e.stores || []).some(id => hubStores.some(s => s.id === id)));
   const people = [...members, ...helpers];
   const isHelper = new Set(helpers.map(e => e.id));
   const plan = {}, notes = [];
@@ -535,7 +541,7 @@ function autoPlan() {
   // 這格是不是排在「別間主要門市」的店（多間主要門市的人）→ 不能動、當天也不能再排
   const elsewhere = c => c && c.s && c.s !== "off" && (c.st || []).some(id => !own.has(id));
   // 不保留：先把這段期間的格子清空（排在別間主要門市的班不動）
-  if (!keep) for (const ds of days) for (const e of people) if (!elsewhere(cell(ds, e.id))) plan[ds + "_" + e.id] = null;
+  if (!keep) for (const ds of days) for (const e of people) if (!elsewhere(cell(ds, e.id)) && !cell(ds, e.id)?.tr) plan[ds + "_" + e.id] = null;
   for (const ds of days) {
     const used = new Set(people.filter(e => { const c = get(ds, e.id); return (keep && c) || elsewhere(c); }).map(e => e.id));
     for (const sh of ["am", "pm"]) {
@@ -629,6 +635,7 @@ function peopleHtml() {
     <td><select data-ch="eShift" data-id="${e.id}">${[["any", "早晚都可"], ["am", "只上早班"], ["pm", "只上晚班"]].map(([k, v]) => `<option value="${k}" ${(e.shift || "any") === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
     <td><input type="number" min="1" max="7" value="${e.maxDays || ""}" placeholder="${weekCap()}" data-ch="eMax" data-id="${e.id}" style="width:56px"></td>
     <td><button class="btn small" data-act="eStores" data-id="${e.id}">${(e.stores || []).length ? `${e.stores.length} 家` : "不限"}</button></td>
+    <td><input type="checkbox" data-ch="eTr" data-id="${e.id}" ${e.trainee ? "checked" : ""} title="實習人員：自動排班不排，主管在班表點格子安排跟誰實習"></td>
     <td><input type="checkbox" data-ch="eAct" data-id="${e.id}" ${e.active !== false ? "checked" : ""}></td>
     <td><button class="btn small danger" data-act="eDel" data-id="${e.id}">刪</button></td></tr>`).join("");
   const act = emps().filter(e => e.active !== false);
@@ -644,8 +651,8 @@ function peopleHtml() {
       <input type="text" id="newEmp" placeholder="姓名" style="width:100px"><input type="text" id="newEmpCode" placeholder="工號" style="width:110px">
       <button class="btn" data-act="addEmp">新增到「${esc(hubBy(S.hub)?.name)}」</button>
     </div>
-    <div class="scrollx"><table class="list emp"><tr><th>姓名</th><th>工號</th><th>主要門市</th><th>班別</th><th>每週最多天</th><th>可去門市</th><th>啟用</th><th></th></tr>${rows || `<tr><td colspan="8" class="muted" style="padding:16px">還沒有人員</td></tr>`}</table></div>
-    <p class="muted small">「主要門市」可以選不只一間，這個人會出現在每一間的排班裡。離職的人取消「啟用」就好，歷史班表會保留。「可去門市」不限＝主要門市底下每一家都可以排。</p></div>`;
+    <div class="scrollx"><table class="list emp"><tr><th>姓名</th><th>工號</th><th>主要門市</th><th>班別</th><th>每週最多天</th><th>可去門市</th><th>實習</th><th>啟用</th><th></th></tr>${rows || `<tr><td colspan="9" class="muted" style="padding:16px">還沒有人員</td></tr>`}</table></div>
+    <p class="muted small">「主要門市」可以選不只一間，這個人會出現在每一間的排班裡。離職的人取消「啟用」就好，歷史班表會保留。「可去門市」不限＝主要門市底下每一家都可以排。<b>實習</b>打勾的人自動排班不會排，主管在「7. 班表」點他的格子選「實習」，指定跟誰（帶班人員）；班表上新人會看到「實習・跟 某某」，帶班人員會看到「帶 某某」。新人、帶班人員要看班表的話，把 Email 加到「設定 → 權限」的檢視者。</p></div>`;
 }
 
 /* ---------- 可支援門市（人員 × 門市） ---------- */
@@ -1018,6 +1025,7 @@ const CH = {
   eShift: t => patchEmp(t.dataset.id, { shift: t.value }),
   eMax: t => patchEmp(t.dataset.id, { maxDays: t.value === "" ? null : +t.value }),
   eAct: t => patchEmp(t.dataset.id, { active: t.checked }),
+  eTr: t => patchEmp(t.dataset.id, { trainee: t.checked }),
   lvYm: t => { if (t.value) { S.leaveYm = t.value; render(); } },
   storeFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreFile(f); },
   supPeople: t => { S.supPeople = t.value; render(); },
@@ -1078,14 +1086,17 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = fal
 // 編輯某人某天
 function openCellEditor(eid, ds) {
   const e = empBy(eid), c = cell(ds, eid) || {}, av = avOf(ds, eid);
-  let s = c.s || "", sel = new Set(c.st || []);
+  let s = c.tr ? "tr" : c.s || "", sel = new Set(c.st || []), tr = c.tr || "";
   const draw = () => {
     const own = (eHubs(e).length ? eHubs(e) : [S.hub]).flatMap(storesOf), other = stores().filter(x => !own.includes(x));
     const cov = s === "am" || s === "pm" ? coverage(ds, s) : {};
     const btn = x => { const by = (cov[x.id] || []).filter(p => p.id !== eid); return `<button class="pbtn ${sel.has(x.id) ? "on" : ""} ${needs(x, s) && !by.length && !sel.has(x.id) ? "need" : ""}" data-st="${x.id}">${esc(x.name)}${by.length ? `<small>${esc(by.map(p => p.name).join("、"))}</small>` : needs(x, s) ? "<small>沒人</small>" : ""}</button>`; };
     m.innerHTML = `<h2>${esc(e.name)}・${dLabel(ds)}</h2>
       ${av ? `<div class="avline">${AVL[av]}</div>` : ""}
-      <div class="seg" style="margin:8px 0">${[["", "清空"], ["off", "休"], ["am", "早班"], ["pm", "晚班"]].map(([k, v]) => `<button class="${s === k ? "on" : ""}" data-s="${k}">${v}</button>`).join("")}</div>
+      <div class="seg" style="margin:8px 0">${[["", "清空"], ["off", "休"], ["am", "早班"], ["pm", "晚班"], ["tr", "🎓 實習"]].map(([k, v]) => `<button class="${s === k ? "on" : ""}" data-s="${k}">${v}</button>`).join("")}</div>
+      ${s === "tr" ? (() => { const ws = emps().filter(x => x.id !== eid && !x.trainee && (() => { const y = cell(ds, x.id); return y && (y.s === "am" || y.s === "pm") && !y.tr; })());
+        return `<div class="sub">選帶班人員（這天有上班的人）：新人會跟他同一班、跑一樣的門市</div><div class="picker">${ws.map(x => { const y = cell(ds, x.id); return `<button class="pbtn ${tr === x.id ? "on" : ""}" data-tr="${x.id}">${esc(x.name)}<small>${SH1[y.s]}班 ${esc((y.st || []).map(sName).join("、"))}</small></button>`; }).join("") || `<span class="muted small">這天還沒有人排班，先排好帶班人員的班再來安排實習</span>`}</div>
+        <input type="text" id="ceNote" placeholder="備註（選填，例：第 3 天實習）" value="${esc(c.n || "")}" style="width:100%;margin-top:10px">`; })() : ""}
       ${s === "am" || s === "pm" ? `<div class="sub">選負責的門市（紅框＝這班還沒人負責）</div><div class="picker">${own.map(btn).join("")}</div>
         ${other.length ? `<details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">其他主要門市的門市（支援）</summary><div class="picker" style="margin-top:6px">${other.map(btn).join("")}</div></details>` : ""}
         <input type="text" id="ceNote" placeholder="備註（選填）" value="${esc(c.n || "")}" style="width:100%;margin-top:10px">` : ""}
@@ -1097,10 +1108,13 @@ function openCellEditor(eid, ds) {
     const b = ev.target.closest("button"); if (!b) return;
     if (b.dataset.s !== undefined) { s = b.dataset.s; draw(); return; }
     if (b.dataset.st) { sel.has(b.dataset.st) ? sel.delete(b.dataset.st) : sel.add(b.dataset.st); draw(); return; }
+    if (b.dataset.tr) { tr = b.dataset.tr; draw(); return; }
     if (b.dataset.x === "cancel") return closeModal();
     if (b.dataset.x === "save") {
       const note = (m.querySelector("#ceNote")?.value || "").trim();
-      const v = !s ? null : s === "off" ? { s: "off", st: [] } : { s, st: [...sel], ...(note ? { n: note } : {}) };
+      if (s === "tr" && !tr) return toast("請選帶班人員");
+      const tc = s === "tr" ? cell(ds, tr) : null;
+      const v = !s ? null : s === "off" ? { s: "off", st: [] } : s === "tr" ? { s: tc.s, st: [...(tc.st || [])], tr, ...(note ? { n: note } : {}) } : { s, st: [...sel], ...(note ? { n: note } : {}) };
       if (await writeCell(ds, eid, v)) closeModal();
     }
   };
@@ -1400,7 +1414,7 @@ async function loadXLSX() {
 }
 async function exportExcel() {
   const X = await loadXLSX(), wb = X.utils.book_new(), days = monthDays(S.ym), hubN = hubBy(S.hub)?.name || "";
-  const txt = c => !c ? "" : c.s === "off" ? "休" : `${SH1[c.s]} ${(c.st || []).map(sName).join("、")}${c.n ? `（${c.n}）` : ""}`;
+  const txt = c => !c ? "" : c.s === "off" ? "休" : `${c.tr ? `實習（跟${empBy(c.tr)?.name || ""}）` : ""}${SH1[c.s]} ${(c.st || []).map(sName).join("、")}${c.n ? `（${c.n}）` : ""}`;
   const rows = [[hubN, ...days.map(d => `${d.d}(${d.wd})`)]];
   for (const e of rowsFor(days, cell)) rows.push([e.name, ...days.map(d => txt(cell(d.ds, e.id)))]);
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(rows), "班表");
