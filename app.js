@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v51";
+const APP_VER = "v52";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -69,8 +69,9 @@ const isOff = s => s.off === true || (s.needAm === false && s.needPm === false);
 const needs = s => !isOff(s);
 // 工作量看整天（舊資料可能分早晚）
 const loadOf = s => +(s.load ?? s.loadAm ?? s.loadPm) || 1;
-// 每班在店時數＝workload（每天）÷ 400 ÷ 2
-const shHrs = s => { if (!s) return 0; const w = +(s.load ?? s.loadAm); return w > 0 ? w / 400 / 2 : 0; };
+// 每班在店時數＝workload（每天）÷ 350 ÷ 2
+const WL_RATE = 350;
+const shHrs = s => { if (!s) return 0; const w = +(s.load ?? s.loadAm); return w > 0 ? w / WL_RATE / 2 : 0; };
 // NDD：有 NDD 打包數就算有 NDD 寄件
 const isNdd = s => !!s && (+s.nddCnt > 0 || (s.nddCnt == null && !!s.ndd));
 const fmtH = h => (Math.round(h * 100) / 100).toFixed(2);
@@ -363,9 +364,10 @@ function cellInner(c, av, hs, ds, src, eid) {
   return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st ${(c.sp || []).includes(id) ? "spt" : ""}">${(c.sp || []).includes(id) ? "支援 " : ""}${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (kids.length ? `<div class="trn">🎓 帶 ${kids.map(x => esc(x.name)).join("、")}</div>` : "") + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
 }
 // 這格每家店的在店時數（一間一個）：每班在店時數；同一班同一家店排了幾個人就平分
-function cellHrs(c, ds, cov) {
+// 支援的店不顯示時數；同一家店有幾個「正式負責」的人（不含去支援的）就平分
+function cellHrs(c, ds, cov, src) {
   if (!c || !c.s || c.s === "off" || c.tr) return [];
-  return (c.st || []).map(id => shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).length));
+  return (c.st || []).map(id => (c.sp || []).includes(id) ? 0 : shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).filter(p => !(src(ds, p.id)?.sp || []).includes(id)).length));
 }
 const SHIFT_GROUP = [["am", "☀️ 早班人員"], ["pm", "🌙 晚班人員"], ["any", "早晚都可"], ["tr", "🎓 實習人員"]];
 function personRows(list, days, src, changed) {
@@ -387,7 +389,7 @@ function personRows1(list, days, src, changed) {
       prevS = on ? c.s : null;
       if (c && c.s !== "off") { work++; cnt += (c.st || []).length; }
       const bad = av && c && c.s !== "off" && avBad(av, c.s);
-      const ch = changed && changed(d.ds, e.id), h = cellHrs(c, d.ds, cov);
+      const ch = changed && changed(d.ds, e.id), h = cellHrs(c, d.ds, cov, src);
       hrs += h.reduce((a, x) => a + x, 0);
       return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av, h, d.ds, src, e.id)}</td>`;
     }).join("");
@@ -709,7 +711,7 @@ function storesHtml() {
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>workload<br>（整天）</th><th>NDD<br>打包數</th><th>每班<br>在店時數</th>${FLAGS.map(([, v]) => `<th>${v}</th>`).join("")}<th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="15" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
-      <b>只要給 workload 和 NDD 打包數</b>：用公版匯入（或在表格直接改），系統會自動算出<b>每班在店時數</b>＝workload ÷ 400 ÷ 2，有 NDD 打包數就算有 NDD 寄件；匯入時勾「自動重新產生路線」就會一起排好路線，再到「6. 自動排班」產生班表。<br>
+      <b>只要給 workload 和 NDD 打包數</b>：用公版匯入（或在表格直接改），系統會自動算出<b>每班在店時數</b>＝workload ÷ 350 ÷ 2，有 NDD 打包數就算有 NDD 寄件；匯入時勾「自動重新產生路線」就會一起排好路線，再到「6. 自動排班」產生班表。<br>
       HD、純取件、重新分配設定一次就好（勾選會自動儲存）。<br>
       <b>公版 Excel</b>：按「下載公版 Excel」下載目前的門市資料，改 workload、NDD打包數後按「匯入 Excel…」匯回來。<b>匯入營運指標週報</b>：直接選每週的門市週報檔，會讀最新一週的 workload（Avg 4W）。<br>
       系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
@@ -1336,7 +1338,7 @@ async function importKpi(X, buf, sheet, fname) {
       對到 <b>${ok.length}</b> 家門市，會更新 workload（Avg 4W），每班在店時數會自動重算。
       ${miss.length ? `<br><span style="color:var(--warn)">找不到資料：${miss.map(esc).join("、")}（新店還沒有資料是正常的，會保留原本的數字）</span>` : ""}</div>
     <div class="scrollx" style="max-height:340px;overflow:auto"><table class="list"><tr><th>門市</th><th>workload</th><th>每班在店時數</th></tr>
-      ${ok.map(([s, r]) => `<tr><td>${esc(s.name)}</td><td>${r.wl != null ? `${f(s.load)} → <b>${Math.round(r.wl)}</b>` : f(s.load)}</td><td>${r.wl != null ? fmtH(r.wl / 800) : "—"}</td></tr>`).join("")}</table></div>
+      ${ok.map(([s, r]) => `<tr><td>${esc(s.name)}</td><td>${r.wl != null ? `${f(s.load)} → <b>${Math.round(r.wl)}</b>` : f(s.load)}</td><td>${r.wl != null ? fmtH(r.wl / WL_RATE / 2) : "—"}</td></tr>`).join("")}</table></div>
     <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">更新</button></div>`);
   m.onclick = async ev => {
     const b = ev.target.closest("button"); if (!b) return;
@@ -1366,7 +1368,7 @@ async function storeTemplate() {
   const X = await loadXLSX(), wb = X.utils.book_new();
   const has = v => v ? "有" : "";
   const info = [["智取店排班系統・公版 Excel"], [""], ["每次只要更新「門市」頁的 workload（每天、四週平均）和 NDD打包數，再到網站「3. 門市」→「匯入 Excel…」選這個檔案。"],
-    ["系統會自動換算每班在店時數（workload ÷ 400 ÷ 2），有 NDD 打包數就算有 NDD 寄件；匯入時勾「自動重新產生路線」就會依 workload 排好早晚班路線，再到「6. 自動排班」產生班表。"],
+    ["系統會自動換算每班在店時數（workload ÷ 350 ÷ 2），有 NDD 打包數就算有 NDD 寄件；匯入時勾「自動重新產生路線」就會依 workload 排好早晚班路線，再到「6. 自動排班」產生班表。"],
     ["HD門市、純取件店、重新分配、接受支援：有就填「有」，沒有留空（設定一次就好）。接受支援＝工作量低的路線可以加這家店去支援。新增門市就往下加一列。"], ["不排一起：兩家店不能排在同一條路線。"]];
   const w0 = X.utils.aoa_to_sheet(info); w0["!cols"] = [{ wch: 110 }]; X.utils.book_append_sheet(wb, w0, "說明");
   const head = ["主要門市", "門市名稱", "地址", "workload", "NDD打包數", "HD門市", "純取件店", "重新分配", "接受支援"];
