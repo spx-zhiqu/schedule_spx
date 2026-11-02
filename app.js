@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v48";
+const APP_VER = "v49";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -436,7 +436,7 @@ function autoHtml() {
     <div class="small muted" style="margin-top:10px;line-height:1.8">
       這間主要門市：門市 <b>${st.filter(needs).length}</b> 家（早晚都要排）・可排人員 <b>${people.length}</b> 人
       （只上早班 ${people.filter(e => e.shift === "am").length}、只上晚班 ${people.filter(e => e.shift === "pm").length}、早晚都可 ${people.filter(e => !e.shift || e.shift === "any").length}）<br>
-      條件：每人每週最多 <b>${weekCap()}</b> 天、最多連上 <b>${consecCap() === Infinity ? "不限" : consecCap()}</b> 天${r.maxStores ? `、每班最多 <b>${r.maxStores}</b> 家店` : ""}${r.capAm || r.capPm ? `、每班工作量上限 早 <b>${r.capAm || "不限"}</b>／晚 <b>${r.capPm || "不限"}</b>` : ""}${r.maxKm ? `、同一人負責的店相距 <b>${r.maxKm}</b> 公里內` : ""}
+      條件：每人每週最多 <b>${weekCap()}</b> 天、最多連上 <b>${consecCap() === Infinity ? "不限" : consecCap()}</b> 天
       <a href="#" data-act="goSettings">修改條件</a><br>
       ${["am", "pm"].map(sh => `${SHIFT[sh]}路線 <b>${routesOf("wd_" + sh, S.hub).length}</b> 條`).join("・")}
       ${routesOf("wd_am", S.hub).length || routesOf("wd_pm", S.hub).length ? "（有路線就照路線排，重的路線先排人）" : "（還沒有路線，會照門市的 workload、NDD 打包數自動產生路線再排人）"} <a href="#" data-act="goRoutes">修改路線</a><br>
@@ -463,7 +463,8 @@ function autoHtml() {
 // 把要排的店依距離與工作量分成一組一組（一組給一個人）
 // target：希望當天用幾個人（平均分攤一週的上班天數）；條件不允許時組數可以超過 target
 function buildRoutes(list, sh, people) {
-  const r = rules(), cap = +(sh === "am" ? r.capAm : r.capPm) || 0, maxSt = +r.maxStores || 0, maxKm = +r.maxKm || 0;
+  // 只用在沒排進任何路線的店；跟自動產生路線一樣：晚班最多 2 間、早班最多 3 間，不設工作量上限和距離
+  const cap = 0, maxSt = sh === "pm" ? 2 : 3, maxKm = 0;
   if (!list.length || !people) return [];
   const total = list.reduce((n, s) => n + loadOf(s, sh), 0);
   const limit = Math.min(cap || Infinity, Math.max(total / people, ...list.map(s => loadOf(s, sh))));
@@ -842,12 +843,8 @@ function settingsHtml() {
       <div class="rules">
         ${num("maxDays", "每人每週最多上幾天", "人員那邊可以個別設定")}
         ${num("maxConsec", "最多連續上幾天", "")}
-        ${num("maxStores", "每人每班最多負責幾家店", "預設 2 家")}
-        ${num("capAm", "早班每人工作量上限", "門市工作量加總不超過這個數")}
-        ${num("capPm", "晚班每人工作量上限", "")}
-        ${num("maxKm", "同一人負責的店最遠相距幾公里", "門市要先定位")}
       </div>
-      <p class="muted small">沒填＝不限。工作量上限沒填時，會把當天的工作量平均分給可以上班的人。</p></div>
+      <p class="muted small">沒填＝不限。每人每班跑哪幾家店由「4. 路線」決定（晚班最多 2 間、早班最多 3 間，依 workload 自動分配）。</p></div>
   </div><div>
     <div class="card"><h3>權限・${esc(S.reg?.name)}</h3>
       <label class="small">這個區域的主管（可編輯）Email，一行一個</label>
