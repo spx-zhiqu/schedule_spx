@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v49";
+const APP_VER = "v50";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -74,7 +74,14 @@ const shHrs = s => { if (!s) return 0; const w = +(s.load ?? s.loadAm); return w
 // NDD：有 NDD 打包數就算有 NDD 寄件
 const isNdd = s => !!s && (+s.nddCnt > 0 || (s.nddCnt == null && !!s.ndd));
 const fmtH = h => (Math.round(h * 100) / 100).toFixed(2);
-const FLAGS = [["hd", "HD"], ["pick", "純取件"], ["ndd", "NDD寄件"], ["fbs", "FBS寄件"], ["rearr", "重新分配"]];
+const FLAGS = [["hd", "HD"], ["pick", "純取件"], ["ndd", "NDD寄件"], ["fbs", "FBS寄件"], ["rearr", "重新分配"], ["sup", "接受支援"]];
+// 每人每班最多跑幾間（可在「4. 路線」改；早班預設 3、晚班預設 2）
+const maxOf = sh => sh === "pm" ? (+rules().maxPm > 0 ? +rules().maxPm : 2) : (+rules().maxAm > 0 ? +rules().maxAm : 3);
+// 接受支援的門市：工作量低的路線可以加一間去支援（沒設定過時，預設這幾家）
+const DEFAULT_SUP = ["福壽", "昌盛", "中信", "公園", "福德", "化成", "頭前"];
+const isSup = s => !!s && (s.sup === true || (s.sup === undefined && !stores().some(x => x.sup !== undefined) && DEFAULT_SUP.includes(s.name)));
+// 路線在店時數低於這個數（小時）就加一間支援門市；0＝不加
+const supBelow = () => rules().supBelow === undefined ? 2.5 : +rules().supBelow || 0;
 /* ---------- 路線：master.routes["wd_am"|"wd_pm"] = [{ id, code, st:[門市id…（第一間先做）], n:人數 }]（不分平日／假日） ---------- */
 const RSET = { wd_am: "早班", wd_pm: "晚班" };
 const allRoutes = k => (M().routes || {})[k] || [];
@@ -87,7 +94,7 @@ const bans = () => M().ban || [];
 // 路線檢查（只提醒，不擋）
 function routeWarn(rt, sh) {
   const l = (rt.st || []).map(storeBy).filter(Boolean), w = [];
-  if (sh === "pm" && l.length > 2) w.push("晚班超過 2 間");
+  if (l.length > maxOf(sh)) w.push(`${SHIFT[sh]}超過 ${maxOf(sh)} 間`);
   const ndd = l.filter(isNdd), hd = l.filter(s => s.hd);
   if (sh === "pm" && ndd.length > Math.max(1, +rt.n || 1)) w.push(`${ndd.length} 間有 NDD 寄件`);
   if (sh === "pm" && ndd.length && !isNdd(l[0]) && !l[0].hd) w.push("NDD 店要排第一間");
@@ -347,7 +354,7 @@ const SHICON = { am: "☀️ 早班", pm: "🌙 晚班" };
 function cellInner(c, av, hs) {
   if (!c) return avTag(av);
   if (c.s === "off") return avTag(av) + `<span class="offt">休</span>`;
-  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st">${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
+  return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st ${(c.sp || []).includes(id) ? "spt" : ""}">${(c.sp || []).includes(id) ? "支援 " : ""}${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
 }
 // 這格每家店的在店時數（一間一個）：每班在店時數；同一班同一家店排了幾個人就平分
 function cellHrs(c, ds, cov) {
@@ -464,7 +471,7 @@ function autoHtml() {
 // target：希望當天用幾個人（平均分攤一週的上班天數）；條件不允許時組數可以超過 target
 function buildRoutes(list, sh, people) {
   // 只用在沒排進任何路線的店；跟自動產生路線一樣：晚班最多 2 間、早班最多 3 間，不設工作量上限和距離
-  const cap = 0, maxSt = sh === "pm" ? 2 : 3, maxKm = 0;
+  const cap = 0, maxSt = maxOf(sh), maxKm = 0;
   if (!list.length || !people) return [];
   const total = list.reduce((n, s) => n + loadOf(s, sh), 0);
   const limit = Math.min(cap || Infinity, Math.max(total / people, ...list.map(s => loadOf(s, sh))));
@@ -559,7 +566,7 @@ function autoPlan() {
         routes = rts.map(rt => {
           const ids = rt.st.filter(id => storeBy(id) && needs(storeBy(id)) && !cov[id]);
           const had = Math.max(0, ...rt.st.map(id => (cov[id] || []).length));
-          return { ids, n: Math.max(1, (+rt.n || 1) - had), h: rtHrs(rt), hub: routeHub(rt) };
+          return { ids, sp: (rt.sup || []).filter(id => storeBy(id) && needs(storeBy(id)) && !rt.st.includes(id)), n: Math.max(1, (+rt.n || 1) - had), h: rtHrs(rt), hub: routeHub(rt) };
         }).filter(r => r.ids.length);
         const rest = need.filter(s => !inRt.has(s.id));
         if (rest.length) routes.push(...buildRoutes(rest, sh, Math.max(1, target - routes.length)).map(r => toR(r.stores)));
@@ -587,7 +594,7 @@ function autoPlan() {
         }
         if (!best) continue;
         used.add(best.id); slotsLeft--;
-        plan[ds + "_" + best.id] = { s: sh, st: ids };
+        plan[ds + "_" + best.id] = rt.sp?.length ? { s: sh, st: [...ids, ...rt.sp], sp: rt.sp } : { s: sh, st: ids };
       }
     }
     // 沒排到班的人標「休」（保留模式下不動原本的格子；有多間主要門市的人留空，讓別間還能排）
@@ -679,7 +686,7 @@ function storesHtml() {
     <td><input type="number" min="0" step="any" value="${s.load ?? s.loadAm ?? ""}" placeholder="1" data-ch="sLoad" data-id="${s.id}" style="width:80px"></td>
     <td><input type="number" min="0" value="${s.nddCnt ?? ""}" placeholder="—" data-ch="sNdd" data-id="${s.id}" style="width:64px"></td>
     <td class="num"><b>${shHrs(s) ? fmtH(shHrs(s)) : "—"}</b></td>
-    ${FLAGS.map(([k]) => k === "ndd" ? `<td class="ctr">${isNdd(s) ? "有" : "—"}</td>` : `<td class="ctr"><input type="checkbox" data-ch="sFlag" data-k="${k}" data-id="${s.id}" ${s[k] ? "checked" : ""}></td>`).join("")}
+    ${FLAGS.map(([k]) => k === "ndd" ? `<td class="ctr">${isNdd(s) ? "有" : "—"}</td>` : `<td class="ctr"><input type="checkbox" data-ch="sFlag" data-k="${k}" data-id="${s.id}" ${(k === "sup" ? isSup(s) : s[k]) ? "checked" : ""}></td>`).join("")}
     <td><select data-ch="sHub" data-id="${s.id}">${hubOpts(s.hub)}</select></td>
     <td class="nowrap"><button class="btn small" data-act="sMove" data-id="${s.id}" data-n="-1">↑</button> <button class="btn small" data-act="sMove" data-id="${s.id}" data-n="1">↓</button> <button class="btn small danger" data-act="sDel" data-id="${s.id}">刪</button></td></tr>`).join("");
   const noXY = list.filter(s => !hasXY(s) && s.addr).length;
@@ -715,11 +722,13 @@ function routesHtml() {
     if (dup.length) w.push(dup.map(sName).join("、") + " 也排在別條路線");
     if (w.length) nWarn++;
     const chips = rt.st.map((id, j) => { const x = storeBy(id); return `<span class="rchip">${j + 1}. ${esc(sName(id))}${x?.hd ? '<i class="hd">HD</i>' : ""}${x?.ndd ? '<i class="nd">NDD</i>' : ""}${x?.pick ? '<i class="pk">純取</i>' : ""}<small>${fmtH(shHrs(x))}</small>${j ? `<a data-act="rtMv" data-k="${k}" data-id="${rt.id}" data-j="${j}" title="往前移（先做）">◀</a>` : ""}<a data-act="rtRm" data-k="${k}" data-id="${rt.id}" data-j="${j}" title="移出這條路線">✕</a></span>`; }).join("");
+    const supChips = (rt.sup || []).map(id => `<span class="rchip spt">支援 ${esc(sName(id))}<a data-act="rtSupRm" data-k="${k}" data-id="${rt.id}" data-s="${id}" title="不支援">✕</a></span>`).join("");
+    const supAdd = `<select data-ch="rtSup" data-k="${k}" data-id="${rt.id}"><option value="">＋ 支援</option>${stores().filter(x => needs(x) && isSup(x) && !rt.st.includes(x.id) && !(rt.sup || []).includes(x.id)).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>`;
     const opt = s => `<option value="${s.id}">${esc(s.name)}${inN(s.id) ? "" : "（未排）"}</option>`;
     const add = `<select data-ch="rtAdd" data-k="${k}" data-id="${rt.id}"><option value="">＋ 加門市</option><optgroup label="${esc(hub?.name)}">${hubSt.filter(s => !rt.st.includes(s.id)).map(opt).join("")}</optgroup>${others.length ? `<optgroup label="其他主要門市">${others.filter(s => !rt.st.includes(s.id)).map(opt).join("")}</optgroup>` : ""}</select>`;
     return `<tr><td><input type="text" value="${esc(rt.code || "")}" data-ch="rtCode" data-k="${k}" data-id="${rt.id}" style="width:52px"></td>
       <td><input type="number" min="1" max="5" value="${n}" data-ch="rtN" data-k="${k}" data-id="${rt.id}" style="width:44px"></td>
-      <td class="rstores">${chips}${add}</td><td class="num">${rt.st.length}</td><td class="num"><b>${fmtH(h)}</b></td><td class="num"><b>${fmtH(h / n)}</b></td><td class="num">${sh === "pm" && +storeBy(rt.st[0])?.nddCnt ? storeBy(rt.st[0]).nddCnt : "—"}</td>
+      <td class="rstores">${chips}${supChips}${add}${supAdd}</td><td class="num">${rt.st.length}${(rt.sup || []).length ? `＋${rt.sup.length}` : ""}</td><td class="num"><b>${fmtH(h)}</b></td><td class="num"><b>${fmtH(h / n)}</b></td><td class="num">${sh === "pm" && +storeBy(rt.st[0])?.nddCnt ? storeBy(rt.st[0]).nddCnt : "—"}</td>
       <td class="rwarn">${w.map(esc).join("<br>")}</td><td><button class="btn small danger" data-act="rtDel" data-k="${k}" data-id="${rt.id}">刪</button></td></tr>`;
   }).join("");
   const ppl = list.reduce((a, r) => a + (+r.n || 1), 0), tot = list.reduce((a, r) => a + rtHrs(r), 0);
@@ -730,6 +739,8 @@ function routesHtml() {
     <div class="row" style="margin-bottom:10px">
       <button class="btn primary" data-act="rtGen" data-k="${k}">⚙️ 自動產生路線</button>
       <button class="btn" data-act="rtGenAll">全部主要門市早晚班一起產生</button>
+      <label class="small">每人最多跑 早班 <select data-ch="maxSh" data-k="maxAm">${[2, 3].map(v => `<option ${maxOf("am") === v ? "selected" : ""}>${v}</option>`).join("")}</select> 間・晚班 <select data-ch="maxSh" data-k="maxPm">${[1, 2, 3].map(v => `<option ${maxOf("pm") === v ? "selected" : ""}>${v}</option>`).join("")}</select> 間</label>
+      <label class="small">在店時數低於 <input type="number" min="0" max="8" step="0.1" value="${supBelow()}" data-ch="supBelow" style="width:54px"> 小時的路線加一間支援門市（0＝不加）</label>
       <button class="btn" data-act="rtNew" data-k="${k}">＋ 手動新增路線</button>
       <label class="btn" for="rtFile">匯入路線 Excel…</label><input type="file" id="rtFile" data-ch="storeFile" accept=".xlsx,.xls" hidden>
       <span class="spacer"></span>
@@ -738,8 +749,8 @@ function routesHtml() {
     <div class="scrollx"><table class="list rt"><tr><th>代號</th><th>人數</th><th>門市（1 先做；◀ 往前、✕ 移出）</th><th>間數</th><th>在店時數</th><th>每人在店時數</th><th>第1間<br>NDD打包數</th><th>提醒</th><th></th></tr>
       ${rows || `<tr><td colspan="9" class="muted" style="padding:16px">還沒有路線。按「⚙️ 自動產生路線」，系統會照門市資料排好。</td></tr>`}</table></div>
     ${unrouted.length ? `<p><b class="bad">還沒排進路線的門市（${unrouted.length}）：</b>${unrouted.map(s => esc(s.name)).join("、")}<br><span class="muted small">自動排班時，這些店會照距離另外分組。</span></p>` : list.length ? `<p class="good small">這間主要門市的門市都排進路線了 ✓</p>` : ""}
-    <p class="muted small" style="line-height:1.8"><b>自動產生路線</b>：照「3. 門市」的 workload（換算在店時數）、NDD 打包數、HD，把同一間主要門市底下的店分組——晚班每人最多 2 間、早班最多 3 間；HD 店、晚班有 NDD 寄件的店排第一間，每條最多 1 間；路線數用最少的（晚班每 2 間一條、早班每 3 間一條，有 HD／NDD 店時至少每家一條），再依 workload 平均分配，讓每條路線的在店時數盡量接近；「不排一起」的店不會排在一起。產生後可以再手動調整（例如加人）。<br>在店時數＝每家店「每班在店時數」加總（營運指標僅在店 ÷ 2，店名旁的小數字）；每人在店時數＝在店時數 ÷ 人數。<br>
-      提醒規則：晚班每人最多 2 間；晚班有 NDD 寄件的店、HD 店排第一間，每條最多各 1 間；下面設定的組合不排一起。只提醒，不會擋。<br>
+    <p class="muted small" style="line-height:1.8"><b>自動產生路線</b>：照「3. 門市」的 workload（換算在店時數）、NDD 打包數、HD，把同一間主要門市底下的店分組——晚班每人最多 2 間、早班最多 3 間；HD 店、晚班有 NDD 寄件的店排第一間，每條最多 1 間；每人最多跑幾間照上面的設定（早班 2 或 3 間、晚班 2 間），路線數用最少的，再依 workload 平均分配，讓每條路線的在店時數盡量接近；在店時數低於設定的路線，會再加一間「接受支援」的門市（支援不算在每人最多間數裡；只支援每班在店時數也達門檻的店，每家每班最多 1 人支援）（3. 門市勾選；預設福壽、昌盛、中信、公園、福德、化成、頭前），只找同一間主要門市的；「不排一起」的店不會排在一起。產生後可以再手動調整（例如加人）。<br>在店時數＝每家店「每班在店時數」加總（營運指標僅在店 ÷ 2，店名旁的小數字）；每人在店時數＝在店時數 ÷ 人數。<br>
+      提醒規則：超過每人最多間數（支援不算）；晚班有 NDD 寄件的店、HD 店排第一間，每條最多各 1 間；下面設定的組合不排一起。只提醒，不會擋。<br>
       自動排班會照這裡的路線，把人排進每一條路線（重的路線先排），平日、假日都用同一套。</p></div>
   <div class="card"><h3>不排一起的門市</h3>
     <div class="row" style="margin-bottom:8px"><select id="banA">${sopt}</select>＋<select id="banB">${sopt}</select><button class="btn" data-act="banAdd">新增</button></div>
@@ -747,12 +758,12 @@ function routesHtml() {
 }
 /* ---------- 自動產生路線 ----------
    照門市資料（workload 換算的在店時數、HD、NDD 寄件）和規則把同一間主要門市底下的店分組，不設時數上限：
-   - 晚班每人最多 2 間、早班最多 3 間；HD 店、晚班有 NDD 寄件的店要排第一間，每條路線最多 1 間這種店
+   - 每人最多幾間照設定（早班 2 或 3、晚班 2）；HD 店、晚班有 NDD 寄件的店要排第一間，每條路線最多 1 間這種店
    - 路線數用最少的：max（HD／NDD 店數，總間數 ÷ 每條最多間數）
    - 依 workload 平均分配：由重到輕，每家店放進目前時數最少、還有空位的路線（有座標時同樣條件下選近的）
    - 「不排一起」的組合不會排在同一條 */
-function genRoutes(hub, sh, all = stores(), bl = bans()) {
-  const maxSt = sh === "pm" ? 2 : 3;
+function genRoutes(hub, sh, all = stores(), bl = bans(), supCnt = {}) {
+  const maxSt = maxOf(sh);
   const L = all.filter(s => s.hub === hub && needs(s)).map(s => ({ s, h: shHrs(s) || 0.1 }));
   const head = x => x.s.hd || (sh === "pm" && isNdd(x.s));
   const ban = (r, s) => r.st.some(t => bl.some(([a, b]) => (a === t.id && b === s.id) || (a === s.id && b === t.id)));
@@ -769,13 +780,22 @@ function genRoutes(hub, sh, all = stores(), bl = bans()) {
     }
     if (best) { best.st.push(x.s); best.h += x.h; } else routes.push({ st: [x.s], h: x.h });
   }
+  // 工作量低的路線：加一間同一間主要門市的「接受支援」門市（不算在每人最多間數裡）（同一間主要門市優先，支援人數少、時數大的先）
+  // 只支援本身工作量夠大的店（每班在店時數 ≥ 門檻），避免輕的店互相支援；每家店每班最多 1 人支援
+  const lim = supBelow(), supL = all.filter(s => s.hub === hub && needs(s) && isSup(s) && shHrs(s) >= lim);
+  if (lim > 0 && supL.length) for (const r of [...routes].sort((a, b) => a.h - b.h)) {
+    if (r.h >= lim) continue;
+    const c = supL.filter(x => !r.st.includes(x) && !ban(r, x) && !(supCnt[x.id] >= 1)).sort((a, b) => ((b.hub === hub) - (a.hub === hub)) || shHrs(b) / (1 + (supCnt[b.id] || 0)) - shHrs(a) / (1 + (supCnt[a.id] || 0)))[0];
+    if (c) { r.sup = [c.id]; supCnt[c.id] = (supCnt[c.id] || 0) + 1; }
+  }
   const pre = sh === "pm" ? "N" : "R";
-  return routes.sort((a, b) => b.h - a.h).map((r, i) => ({ id: uid("t"), code: pre + pad(i + 1), hub, st: r.st.map(s => s.id), n: 1 }));
+  return routes.sort((a, b) => b.h - a.h).map((r, i) => ({ id: uid("t"), code: pre + pad(i + 1), hub, st: r.st.map(s => s.id), sup: r.sup || [], n: 1 }));
 }
 function genAll(list, all = stores(), hs = hubs(), bl = bans(), base = M().routes || {}) {
   // list: [[k, hub]]；取代這幾間主要門市在這些班別的路線，代號同一班別全區連號
   const routes = { ...base }, hubOf = r => all.find(s => s.id === r.st?.[0])?.hub || r.hub;
-  for (const [k, hub] of list) routes[k] = [...(routes[k] || []).filter(r => hubOf(r) !== hub), ...genRoutes(hub, k.slice(3), all, bl)];
+  const cnt = { am: {}, pm: {} };
+  for (const [k, hub] of list) routes[k] = [...(routes[k] || []).filter(r => hubOf(r) !== hub), ...genRoutes(hub, k.slice(3), all, bl, cnt[k.slice(3)])];
   for (const k of new Set(list.map(([k]) => k))) { const pre = k.endsWith("pm") ? "N" : "R"; routes[k] = hs.flatMap(h => routes[k].filter(r => hubOf(r) === h.id)).map((r, i) => ({ ...r, code: pre + pad(i + 1) })); }
   delete routes.we_am; delete routes.we_pm;
   return routes;
@@ -963,6 +983,7 @@ const ACT = {
   rtNew: el => { const k = el.dataset.k, pre = k.endsWith("pm") ? "N" : "R"; setRoutes(k, l => [...l, { id: uid("t"), code: pre + pad(l.length + 1), hub: S.hub, st: [], n: 1 }]); },
   rtDel: el => { if (confirm("刪除這條路線？")) setRoutes(el.dataset.k, l => l.filter(r => r.id !== el.dataset.id)); },
   rtMv: el => editRoute(el.dataset.k, el.dataset.id, r => { const j = +el.dataset.j; [r.st[j - 1], r.st[j]] = [r.st[j], r.st[j - 1]]; }),
+  rtSupRm: el => editRoute(el.dataset.k, el.dataset.id, r => { r.sup = (r.sup || []).filter(x => x !== el.dataset.s); }),
   rtRm: el => editRoute(el.dataset.k, el.dataset.id, r => { r.st.splice(+el.dataset.j, 1); }),
 
   banAdd: () => {
@@ -987,7 +1008,11 @@ const CH = {
   sLoad: t => patchStore(t.dataset.id, { load: t.value === "" ? null : +t.value, loadAm: null, loadPm: null }),
   sHub: t => patchStore(t.dataset.id, { hub: t.value }),
   sNdd: t => patchStore(t.dataset.id, { nddCnt: t.value === "" ? null : +t.value }),
-  sFlag: t => patchStore(t.dataset.id, { [t.dataset.k]: t.checked }),
+  sFlag: t => {
+    // 「接受支援」第一次改：先把預設名單寫進每家店，避免其他店的預設消失
+    if (t.dataset.k === "sup" && !stores().some(x => x.sup !== undefined)) return saveMaster({ stores: stores().map(x => ({ ...x, sup: x.id === t.dataset.id ? t.checked : isSup(x) })) });
+    patchStore(t.dataset.id, { [t.dataset.k]: t.checked });
+  },
   eName: t => { const nm = t.value.trim(); if (!nm) return render(); patchEmp(t.dataset.id, { name: nm }); },
   eCode: t => patchEmp(t.dataset.id, { code: t.value.trim().toUpperCase() }),
   eShift: t => patchEmp(t.dataset.id, { shift: t.value }),
@@ -1005,6 +1030,9 @@ const CH = {
     patchEmp(e.id, { stores: same ? [] : stores().map(s => s.id).filter(id => set.has(id)) });
   },
   restore: t => { const f = t.files[0]; t.value = ""; if (f) restore(f); },
+  maxSh: t => saveMaster({ rules: { ...rules(), [t.dataset.k]: +t.value } }),
+  supBelow: t => saveMaster({ rules: { ...rules(), supBelow: t.value === "" ? 0 : +t.value } }),
+  rtSup: t => { const v = t.value; if (v) editRoute(t.dataset.k, t.dataset.id, r => { r.sup = [...(r.sup || []), v]; }); },
   rtAdd: t => { const v = t.value; if (v) editRoute(t.dataset.k, t.dataset.id, r => { r.st.push(v); }); },
   rtCode: t => editRoute(t.dataset.k, t.dataset.id, r => { r.code = t.value.trim(); }),
   rtN: t => editRoute(t.dataset.k, t.dataset.id, r => { r.n = Math.max(1, +t.value || 1); }),
@@ -1167,7 +1195,7 @@ function openStorePaste() {
    沒有「主要門市」欄 → 全部放到目前選的主要門市；有寫但系統沒有 → 自動新增那間主要門市 */
 const STORE_COLS = { hub: /主要門市|母店/, name: /^(門市名稱|店名|門市|名稱)$/, addr: /地址/, xy: /座標/, lat: /緯度|lat/i, lng: /經度|lng|lon/i,
   load: /^(每日|整天|全天|日)?(平均)?工作量|^W\d*平均|^平均|^四週平均workload|^workload/i, loadAm: /早.*(工作量|量)/, loadPm: /晚.*(工作量|量)/, needAm: /早.*(要排|需排|排班)/, needPm: /晚.*(要排|需排|排班)/,
-  ins: /^僅在店|在店時數/, nddCnt: /NDD寄件數|NDD打包數/i, hd: /^HD/i, pick: /純取件/, ndd: /^NDD寄件$/i, fbs: /^FBS寄件/i, rearr: /^重新分配$/ };
+  ins: /^僅在店|在店時數/, nddCnt: /NDD寄件數|NDD打包數/i, hd: /^HD/i, pick: /純取件/, ndd: /^NDD寄件$/i, fbs: /^FBS寄件/i, rearr: /^重新分配$/, sup: /接受支援|支援門市/ };
 function storeRowsFromAoa(aoa) {
   const hi = aoa.findIndex(r => (r || []).some(c => STORE_COLS.name.test(String(c ?? "").trim())));
   if (hi < 0) return null;
@@ -1325,13 +1353,13 @@ async function storeTemplate() {
   const has = v => v ? "有" : "";
   const info = [["智取店排班系統・公版 Excel"], [""], ["每次只要更新「門市」頁的 workload（每天、四週平均）和 NDD打包數，再到網站「3. 門市」→「匯入 Excel…」選這個檔案。"],
     ["系統會自動換算每班在店時數（workload ÷ 400 ÷ 2），有 NDD 打包數就算有 NDD 寄件；匯入時勾「自動重新產生路線」就會依 workload 排好早晚班路線，再到「6. 自動排班」產生班表。"],
-    ["HD門市、純取件店、重新分配：有就填「有」，沒有留空（設定一次就好）。新增門市就往下加一列。"], ["不排一起：兩家店不能排在同一條路線。"]];
+    ["HD門市、純取件店、重新分配、接受支援：有就填「有」，沒有留空（設定一次就好）。接受支援＝工作量低的路線可以加這家店去支援。新增門市就往下加一列。"], ["不排一起：兩家店不能排在同一條路線。"]];
   const w0 = X.utils.aoa_to_sheet(info); w0["!cols"] = [{ wch: 110 }]; X.utils.book_append_sheet(wb, w0, "說明");
-  const head = ["主要門市", "門市名稱", "地址", "workload", "NDD打包數", "HD門市", "純取件店", "重新分配"];
-  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).filter(needs).map(s => [h.name, s.name, s.addr || "", s.load ?? s.loadAm ?? "", s.nddCnt ?? "", has(s.hd), has(s.pick), has(s.rearr)]))
-    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", 1500, 120, "", "", ""]];
+  const head = ["主要門市", "門市名稱", "地址", "workload", "NDD打包數", "HD門市", "純取件店", "重新分配", "接受支援"];
+  const list = stores().length ? hubs().flatMap(h => storesOf(h.id).filter(needs).map(s => [h.name, s.name, s.addr || "", s.load ?? s.loadAm ?? "", s.nddCnt ?? "", has(s.hd), has(s.pick), has(s.rearr), has(isSup(s))]))
+    : [[hubBy(S.hub)?.name || "新莊榮華店", "範例門市", "新北市新莊區○○路1號", 1500, 120, "", "", "", ""]];
   const ws = X.utils.aoa_to_sheet([head, ...list]);
-  ws["!cols"] = [14, 10, 36, 10, 11, 8, 8, 8].map(w => ({ wch: w }));
+  ws["!cols"] = [14, 10, 36, 10, 11, 8, 8, 8, 8].map(w => ({ wch: w }));
   X.utils.book_append_sheet(wb, ws, "門市");
   const wbn = X.utils.aoa_to_sheet([["門市A", "門市B"], ...bans().filter(([a, b]) => storeBy(a) && storeBy(b)).map(([a, b]) => [sName(a), sName(b)])]);
   wbn["!cols"] = [{ wch: 12 }, { wch: 12 }]; X.utils.book_append_sheet(wb, wbn, "不排一起");
