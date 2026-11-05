@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v52";
+const APP_VER = "v53";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -430,7 +430,7 @@ function gridHtml() {
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
     <button class="icon-btn" data-act="month" data-n="-1">‹</button><b style="font-size:16px">${y}年${+m}月</b><button class="icon-btn" data-act="month" data-n="1">›</button>
-    <span class="spacer"></span><button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" onclick="window.print()">列印</button></div>`;
+    <span class="spacer"></span><button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
 }
 
 /* ---------- 自動排班 ---------- */
@@ -910,6 +910,7 @@ const ACT = {
   assign: el => openAssign(el.dataset.store, el.dataset.ds, el.dataset.sh),
   editCell: el => openCellEditor(el.dataset.e, el.dataset.ds),
   exportX: () => exportExcel(),
+  exportApollo: () => exportApollo(),
   go: el => setTab(el.dataset.tab),
   goSettings: (el, e) => { e.preventDefault(); setTab("settings"); },
   goRoutes: (el, e) => { e.preventDefault(); setTab("routes"); },
@@ -1424,6 +1425,60 @@ async function exportExcel() {
   for (const sh of ["am", "pm"]) miss.push([`${SHIFT[sh]}漏排`, ...days.map(d => missing(d.ds, sh, S.hub).map(s => s.name).join(" ") || "✓")]);
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(miss), "漏排");
   X.writeFile(wb, `排班_${hubN}_${S.ym}.xlsx`);
+}
+// ───────── 匯出 Apollo 班表匯入檔（格式＝Apollo「班表匯入範本」的「匯入檔」分頁） ─────────
+// 規則：
+//  - 每人每天一列；不填任何「支援單位代碼」（填了 Apollo 腳本就無法再調整當天上下班時間）
+//  - 早班固定 08:30 起算、晚班固定 17:30 起算；下班時間＝上班時間＋當天路線所需時數（往上取整到 15 分）
+//  - 班次代碼只決定薪資的時數級別，一律依所需時數往上選：≤4 小時→4hr、≤6 小時→6hr、其餘→8hr
+//    （班次給太低，薪資就只算那麼多小時）；匯入後上下班時間可在 Apollo 自由調整
+//  - 路線所需時數＝cellHrs（在店時數，支援的店不算、同店多人平分）；移動時間先不計
+const APOLLO = {
+  amStart: "08:30", pmStart: "17:30",
+  am: { 4: "A40830", 6: "A60830", 8: "A80830" },   // 早4／早6／早8 (08:30)
+  pm: { 4: "C41730", 6: "C61730", 8: "B81600" },   // 晚4／晚6 (17:30)；晚班超過 6 小時用午8（範本午8 最晚 16:00，開始時間匯入後可調）
+  work: "W0001", off: "H0001",                    // 上班／休假日（要改成休息日就用 H0002）
+  noHours: 4,                                      // 算不出時數（門市沒有 workload）時先給的小時數
+};
+function apolloRow(code, name, ds, c, hrs) {
+  const date = `${ds.slice(0, 4)}/${ds.slice(4, 6)}/${ds.slice(6, 8)}`;
+  if (c.s === "off") return [code, name, date, APOLLO.off];
+  const start = c.s === "am" ? APOLLO.amStart : APOLLO.pmStart, sm = +start.slice(0, 2) * 60 + +start.slice(3);
+  const mins = Math.max(15, Math.ceil(hrs * 4 - 1e-6) * 15);         // 往上取整到 15 分
+  const tier = mins <= 240 ? 4 : mins <= 360 ? 6 : 8, em = (sm + mins) % 1440;
+  const hm = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  return [code, name, date, APOLLO.work, APOLLO[c.s][tier], start, hm(em)];
+}
+async function exportApollo() {
+  const days = monthDays(S.ym), hubN = hubBy(S.hub)?.name || "";
+  const memo = {}, cov = (ds, sh) => memo[ds + sh] ||= coverage(ds, sh, cell);
+  const noCode = new Set(), noHrs = [], rows = [];
+  for (const e of rowsFor(days, cell)) {
+    for (const d of days) {
+      let c = cell(d.ds, e.id);
+      if (!c || !c.s) continue;
+      if (!e.code) { noCode.add(e.name); continue; }
+      let hrs = 0;
+      if (c.s !== "off") {
+        // 實習：沿用帶班人員當天的時數
+        const m = c.tr ? cell(d.ds, c.tr) : c;
+        hrs = m && m.s === c.s ? cellHrs(m, d.ds, cov, cell).reduce((a, b) => a + b, 0) : 0;
+        if (!(hrs > 0)) { hrs = APOLLO.noHours; noHrs.push(`${e.name} ${d.ds.slice(4, 6)}/${d.ds.slice(6, 8)}`); }
+      }
+      rows.push(apolloRow(e.code, e.name, d.ds, c, hrs));
+    }
+  }
+  if (!rows.length) return toast("這個月沒有可匯出的班表（或人員都沒有工號）");
+  const warn = [];
+  if (noCode.size) warn.push(`${noCode.size} 位沒有工號，不會匯出：${[...noCode].join("、")}`);
+  if (noHrs.length) warn.push(`${noHrs.length} 筆算不出所需時數（門市沒有 workload），先給 ${APOLLO.noHours} 小時：${noHrs.slice(0, 8).join("、")}${noHrs.length > 8 ? "…" : ""}`);
+  if (warn.length && !confirm(warn.join("\n") + "\n\n仍要匯出？")) return;
+  const head = ["*工號", "姓名", "*日期(YYYY/MM/DD)", "*狀態代碼", "班次代碼", "上班時間(HH:mm)", "下班時間(HH:mm)", "休息時間(hh:mm~hh:mm；如有多組以\",\"分隔)", "全天支援單位代碼"];
+  for (let i = 1; i <= 15; i++) head.push(`(${i})支援單位代碼`, `(${i})支援起時-hh:mm`, `(${i})支援迄時-hh:mm`);
+  const X = await loadXLSX(), wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([head, ...rows]), "匯入檔");
+  X.writeFile(wb, `Apollo匯入_${hubN}_${S.ym}.xlsx`);
+  toast(`已匯出 ${rows.length} 列${warn.length ? "（有提醒，請確認）" : ""}`);
 }
 async function backup() {
   toast("整理備份中…");
