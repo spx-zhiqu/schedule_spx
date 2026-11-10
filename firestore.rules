@@ -21,6 +21,8 @@ service cloud.firestore {
 
       // 畫休設定（含員工名單）：員工不用登入也要讀得到
       match /cfg/leave { allow read: if true; allow write: if rAdmin(r); }
+      // 發布給員工看的班表（員工免登入讀；只有主管能寫）：只含姓名、班別、門市名稱
+      match /pub/{ym} { allow read: if true; allow write: if rAdmin(r); }
       // 母店、門市、人員、排班條件
       match /cfg/{doc} { allow read: if rRead(r); allow write: if rAdmin(r); }
       // 每月班表

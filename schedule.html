@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>我的班表</title>
+<meta name="theme-color" content="#ee4d2d">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=17">
+<style>
+.cal{grid-template-columns:repeat(7,minmax(0,1fr))}
+.cal-d{min-height:0;min-width:0}
+.cal-d.today{outline:2px solid #ee4d2d;outline-offset:-2px}
+.cal-d.mine .dt{font-size:12px}
+.sch-nav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.sch-nav b{font-size:18px}
+.sch-today{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line2)}
+.sch-today:first-of-type{border-top:0}
+.sch-badge{flex:none;min-width:52px;text-align:center;border-radius:10px;padding:8px 6px;font-weight:700;font-size:15px}
+.sch-stores{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.sch-st{padding:2px 10px;border-radius:99px;background:#f4f5f7;font-size:14px}
+.sch-st.sp{background:#fff7e6;color:#92400e}
+.sch-dl{font-size:12px;color:var(--muted);text-align:center;margin:6px 0 0}
+</style>
+</head>
+<body class="lv">
+<header class="topbar">
+  <div class="brand"><img src="icon.svg" alt="" width="28" height="28"><span>我的班表</span></div>
+</header>
+<main id="main"><div class="loading">載入中…</div></main>
+<div id="modalRoot"></div>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="schedule.js?v=1"></script>
+</body>
+</html>

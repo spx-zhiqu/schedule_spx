@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v53";
+const APP_VER = "v54";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -430,7 +430,7 @@ function gridHtml() {
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
     <button class="icon-btn" data-act="month" data-n="-1">‹</button><b style="font-size:16px">${y}年${+m}月</b><button class="icon-btn" data-act="month" data-n="1">›</button>
-    <span class="spacer"></span><button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
+    <span class="spacer"></span>${isAdmin() ? '<button class="btn" data-act="pubSched" title="把這個月的班表發布到員工查班表網頁">發布給員工</button><button class="btn" data-act="pubLink">複製查班網址</button>' : ""}<button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
 }
 
 /* ---------- 自動排班 ---------- */
@@ -911,6 +911,8 @@ const ACT = {
   editCell: el => openCellEditor(el.dataset.e, el.dataset.ds),
   exportX: () => exportExcel(),
   exportApollo: () => exportApollo(),
+  pubSched: () => publishSchedule(),
+  pubLink: () => { const u = schedLink(); navigator.clipboard?.writeText(u).then(() => toast("已複製員工查班網址"), () => prompt("請手動複製：", u)); },
   go: el => setTab(el.dataset.tab),
   goSettings: (el, e) => { e.preventDefault(); setTab("settings"); },
   goRoutes: (el, e) => { e.preventDefault(); setTab("routes"); },
@@ -1479,6 +1481,38 @@ async function exportApollo() {
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([head, ...rows]), "匯入檔");
   X.writeFile(wb, `Apollo匯入_${hubN}_${S.ym}.xlsx`);
   toast(`已匯出 ${rows.length} 列${warn.length ? "（有提醒，請確認）" : ""}`);
+}
+// ───────── 發布班表給員工（員工用 schedule.html?r=區域代碼 免登入查班） ─────────
+// 寫到 regions/{區域}/pub/{yyyy-mm}（firestore.rules 要允許任何人讀、主管寫）。
+// 只放姓名、班別、門市名稱；各人的天數用陣列（第 i 格＝當月第 i+1 天），每人整段覆蓋、不同主要門市分開發布也不會互相蓋掉。
+function schedLink() { return location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "") + "schedule.html?r=" + S.rid; }
+function pubEntry(e, ds) {
+  const c = cell(ds, e.id);
+  if (!c || !c.s) return null;
+  if (c.s === "off") return { s: "off" };
+  // 實習：門市照帶班人員當天的班
+  const tc = c.tr ? cell(ds, c.tr) : null, m = tc && tc.s === c.s ? tc : c;
+  const sp = m.sp || [], out = { s: c.s, st: (m.st || []).filter(id => !sp.includes(id)).map(sName), sp: (m.st || []).filter(id => sp.includes(id)).map(sName) };
+  if (c.tr) out.tr = empBy(c.tr)?.name || "";
+  return out;
+}
+async function publishSchedule() {
+  if (!isAdmin()) return toast("只有主管可以發布班表");
+  if (!S.months[S.ym]) return toast("班表還在載入，請稍等");
+  const days = monthDays(S.ym), emps = {};
+  let n = 0;
+  for (const e of rowsFor(days, cell)) {
+    const d = days.map(x => pubEntry(e, x.ds)), any = d.some(Boolean);
+    if (e.active === false && !any) continue;
+    if (any) n++;
+    emps[e.id] = { n: e.name, g: hubBy(eHubs(e)[0])?.name || "", d };
+  }
+  if (!n) return toast("這個月還沒有任何班表可以發布");
+  if (!confirm(`要把「${hubBy(S.hub)?.name || ""}」${S.ym} 的班表發布給員工嗎？\n\n共 ${n} 人有班。知道網址的人都能看到姓名、班別和門市名稱。`)) return;
+  try {
+    await S.store.set(P("pub", S.ym), { ym: S.ym, region: S.reg?.name || "", publishedAt: new Date().toISOString(), emps }, true);
+    toast(`已發布 ${n} 人的班表；用「複製查班網址」傳給員工`);
+  } catch (e) { toast(e.code === "permission-denied" ? "沒有權限，請先更新 Firestore 規則（見說明）" : "發布失敗：" + e.message); }
 }
 async function backup() {
   toast("整理備份中…");
