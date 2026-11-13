@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v56";
+const APP_VER = "v57";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -372,7 +372,7 @@ function cellDense(c, av, hs, ds, src, eid, hs2) {
     const ids = p.st || [], sp = p.sp || [], tot = (h || []).reduce((a, x) => a + x, 0), code = routeCode(p);
     const kids = ds && src ? emps().filter(x => x.id !== eid && onSh(src(ds, x.id), p.s)?.tr === eid) : [];
     return `<div class="dl"><b class="pill p-${p.s}">${SH1[p.s]} ${ids.length - sp.length}間</b>${code ? `<span class="rc">${esc(code)}</span>` : ""}${tot ? `<span class="dh">${fmt1(tot)}h</span>` : ""}${p.n ? `<span class="nt" title="${esc(p.n)}">✎</span>` : ""}</div>`
-      + `<div class="dn">${ids.map(id => sp.includes(id) ? `<span class="spn">+${esc(sName(id))}</span>` : esc(sName(id))).join(" ")}</div>`
+      + `<div class="dn">${ids.map((id, i) => sp.includes(id) ? `<div class="spn">+${esc(sName(id))}<small>支援</small></div>` : `<div>${esc(sName(id))}${h && h[i] ? `<small>${fmtH(h[i])}</small>` : ""}</div>`).join("")}</div>`
       + (kids.length ? `<div class="dh trn">🎓帶${kids.map(k => esc(k.name)).join("、")}</div>` : "");
   };
   const x = xOf(c);

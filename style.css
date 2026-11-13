@@ -405,7 +405,10 @@ td.rwarn{color:#b45309;font-size:12px;min-width:120px}
 .sg.dense .dh{font-size:10.5px;color:#475569;font-weight:600}
 .sg.dense .rc{font-size:10px;color:#475569;background:#fff;border:1px solid #cbd5e1;border-radius:4px;padding:0 3px}
 .sg.dense .nt{font-size:11px;color:#b45309;cursor:help}
-.sg.dense .dn{font-size:12.5px;font-weight:600;color:#0f172a;margin-top:2px;word-break:keep-all}
+.sg.dense .dn{font-size:12.5px;font-weight:600;color:#0f172a;margin-top:2px;word-break:keep-all;line-height:1.35}
+.sg.dense .dn small{margin-left:4px;font-size:11px;font-weight:600;color:#0369a1}
+.sg.dense td.c.s-pm .dn small,.sg.dense .dbl-pm small{color:#6d28d9}
+.sg.dense .dn .spn small{color:#c2410c;font-weight:500}
 .sg.dense .dn .spn{color:#c2410c}
 .sg.dense .dsep{border-top:1px dashed #a78bfa;margin:4px 0 3px}
 .sg.dense td.tot{font-size:12px;min-width:58px;line-height:1.35}
