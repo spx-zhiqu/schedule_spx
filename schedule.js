@@ -1,12 +1,16 @@
 // 員工查班表頁：免登入，選自己的名字 → 看這個月的班（早／晚／休）和要跑的門市
 // 資料來自主管按「發布給員工」寫入的 regions/{區域}/pub/{yyyy-mm}（只含姓名、班別、門市名稱）
-import { createStore } from "./store.js?v=4";
+import { createStore } from "./store.js?v=5";
 const RID = new URLSearchParams(location.search).get("r") || "";
 
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
 const LABEL = { am: "早班", pm: "晚班", off: "休假" };
 const ICON = { am: "☀️", pm: "🌙", off: "" };
 const SHORT = { am: "早", pm: "晚", off: "休" };
+// 同一天早晚雙班：第二個班在 e.x
+const cls = e => e ? "c-" + e.s + (e.x ? " c-dbl" : "") : "";
+const shortOf = e => SHORT[e.s] + (e.x ? SHORT[e.x.s] : "");
+const labelOf = e => e.x ? `${ICON[e.s]} ${LABEL[e.s]}＋${ICON[e.x.s]} ${LABEL[e.x.s]}` : `${ICON[e.s]} ${LABEL[e.s]}`;
 const $ = s => document.querySelector(s);
 const main = $("#main");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -62,7 +66,7 @@ function render() {
   for (let i = 0; i < lead; i++) cells += `<div class="cal-e"></div>`;
   for (let d = 1; d <= days; d++) {
     const ds = `${y}${pad(m)}${pad(d)}`, e = mine.d?.[d - 1], wd = new Date(y, m - 1, d).getDay();
-    cells += `<button class="cal-d ${e ? "c-" + e.s : ""} ${wd === 0 || wd === 6 ? "we" : ""} ${ds === today ? "today" : ""}" data-d="${d}"><span class="dn">${d}</span>${e ? `<span class="dt">${SHORT[e.s]}</span>` : ""}</button>`;
+    cells += `<button class="cal-d ${cls(e)} ${wd === 0 || wd === 6 ? "we" : ""} ${ds === today ? "today" : ""}" data-d="${d}"><span class="dn">${d}</span>${e ? `<span class="dt">${shortOf(e)}</span>` : ""}</button>`;
   }
   const has = (mine.d || []).some(Boolean);
   const upcoming = [];
@@ -72,7 +76,7 @@ function render() {
   }
   const pub = L.doc.publishedAt ? new Date(L.doc.publishedAt) : null;
   main.innerHTML = nav + `<div class="row" style="margin-top:6px"><b style="font-size:16px">${esc(L.me.name)}</b><a href="#" id="notMe" class="small">不是我，重新選擇</a></div></div>
-    ${upcoming.length ? `<div class="card">${upcoming.map(([dd, e, lb]) => `<div class="sch-today"><div class="sch-badge ${e ? "c-" + e.s : ""}">${lb}</div><div><b>${dd.getMonth() + 1}/${dd.getDate()}（${WD[dd.getDay()]}）${e ? ICON[e.s] + " " + LABEL[e.s] : "沒有排班"}</b>${e ? storeChips(e) : ""}</div></div>`).join("")}</div>` : ""}
+    ${upcoming.length ? `<div class="card">${upcoming.map(([dd, e, lb]) => `<div class="sch-today"><div class="sch-badge ${cls(e)}">${lb}</div><div><b>${dd.getMonth() + 1}/${dd.getDate()}（${WD[dd.getDay()]}）${e ? labelOf(e) : "沒有排班"}</b>${e ? storeChips(e) : ""}</div></div>`).join("")}</div>` : ""}
     <div class="card">${has ? "" : `<p class="muted" style="text-align:center;margin:0 0 10px">這個月還沒有你的班表。</p>`}
       <div class="cal">${["一", "二", "三", "四", "五", "六", "日"].map(w => `<div class="cal-h">${w}</div>`).join("")}${cells}</div>
       <div class="legend" style="margin-top:10px"><span><i class="c-am"></i>早班</span><span><i class="c-pm"></i>晚班</span><span><i class="c-off"></i>休假</span><span>點日期看要去哪些門市</span></div>
@@ -80,6 +84,7 @@ function render() {
 }
 function storeChips(e) {
   if (e.s === "off") return "";
+  if (e.x) { const { x, ...a } = e; return `<div class="small" style="margin-top:4px">${ICON[a.s]} ${LABEL[a.s]}</div>` + storeChips(a) + `<div class="small" style="margin-top:6px">${ICON[x.s]} ${LABEL[x.s]}</div>` + storeChips(x); }
   const tr = e.tr ? `<div class="muted small" style="margin-top:2px">🎓 實習・跟 ${esc(e.tr)}</div>` : "";
   const st = (e.st || []).map(n => `<span class="sch-st">${esc(n)}</span>`).join("") + (e.sp || []).map(n => `<span class="sch-st sp">支援 ${esc(n)}</span>`).join("");
   return tr + (st ? `<div class="sch-stores">${st}</div>` : `<div class="muted small" style="margin-top:2px">門市請跟主管確認</div>`);
@@ -95,7 +100,7 @@ function openDay(d) {
   const [y, m] = L.ym.split("-").map(Number), e = L.doc?.emps?.[L.me?.id]?.d?.[d - 1];
   const root = $("#modalRoot"), wd = WD[new Date(y, m - 1, d).getDay()];
   root.innerHTML = `<div class="modal-bg"><div class="modal sheet"><h2>${m}/${d}（${wd}）</h2>
-    <div class="sch-today" style="border:0"><div class="sch-badge ${e ? "c-" + e.s : ""}">${e ? ICON[e.s] + " " + SHORT[e.s] : "—"}</div><div><b>${e ? LABEL[e.s] : "沒有排班"}</b>${e ? storeChips(e) : ""}</div></div>
+    <div class="sch-today" style="border:0"><div class="sch-badge ${cls(e)}">${e ? shortOf(e) : "—"}</div><div><b>${e ? labelOf(e) : "沒有排班"}</b>${e ? storeChips(e) : ""}</div></div>
     <div class="actions"><span class="spacer"></span><button class="btn" id="mClose">關閉</button></div></div></div>`;
   const bg = root.querySelector(".modal-bg");
   bg.onclick = ev => { if (ev.target === bg || ev.target.id === "mClose") root.innerHTML = ""; };

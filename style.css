@@ -381,3 +381,10 @@ td.rwarn{color:#b45309;font-size:12px;min-width:120px}
 .sg .st .hrs{margin-left:4px;font-size:11px;color:#475569;font-weight:600}
 .st.spt,.rchip.spt{background:#fff1e6;color:#c2410c;border-color:#fdba74}
 .sg .trn{font-size:11px;color:#7c3aed;font-weight:600;margin-top:2px}
+
+/* 同一天早晚雙班 */
+.sg td.c.s-dbl{background:linear-gradient(180deg,#e0f2fe 0 50%,#ede9fe 50% 100%)}
+.sg td.c .dbl{margin-top:6px;padding-top:6px;border-top:1px dashed #a78bfa}
+.sg td.c .dbl .shl{color:#6d28d9}
+.dblbox{margin-top:12px;padding:10px;border:1px dashed #c4b5fd;border-radius:10px;background:#faf5ff}
+.c-dbl{background:linear-gradient(135deg,#dbeafe 0 50%,#ede4fb 50% 100%)!important;color:#4c1d95}

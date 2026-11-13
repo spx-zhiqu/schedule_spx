@@ -11,7 +11,7 @@ const sub = (f, re, to) => { const t = read(f); if (!re.test(t)) throw new Error
 sub("app.js", /const APP_VER = "v\d+"/, `const APP_VER = "v${next}"`);
 sub("index.html", /app\.js\?v=\d+/, `app.js?v=${next}`);
 write("version.json", JSON.stringify({ v: "v" + next }) + "\n");
-if (css) for (const f of ["index.html", "leave.html"]) sub(f, /style\.css\?v=(\d+)/, (_, n) => `style.css?v=${+n + 1}`);
+if (css) for (const f of ["index.html", "leave.html", "schedule.html"]) sub(f, /style\.css\?v=(\d+)/, (_, n) => `style.css?v=${+n + 1}`);
 // 三處對照檢查
 const a = read("app.js").match(/APP_VER = "(v\d+)"/)[1], b = read("index.html").match(/app\.js\?v=(\d+)/)[1], c = JSON.parse(read("version.json")).v;
 if (a !== c || a !== "v" + b) throw new Error(`版本號不一致：${a} / v${b} / ${c}`);

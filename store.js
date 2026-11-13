@@ -41,11 +41,17 @@ async function firebaseStore() {
     watch(path, cb, quiet) { return fs.onSnapshot(ref(path), s => cb(s.exists() ? s.data() : null), e => quiet ? cb(null) : onError(e)); },
     async get(path) { const s = await fs.getDoc(ref(path)); return s.exists() ? s.data() : null; },
     set(path, data, merge) { return fs.setDoc(ref(path), data, merge ? { merge: true } : {}); },
-    // 只改 cells 裡的幾格（值為 null 表示刪掉那格）
+    // 只改 cells 裡的幾格（值為 null 表示刪掉那格）。用欄位路徑整格取代，
+    // 不用 merge（merge 會把舊格子的 x／sp／n／tr 留下來）。文件還不存在才用 setDoc 建立。
     async setCells(path, map) {
-      const cells = {};
-      for (const [k, v] of Object.entries(map)) cells[k] = v == null ? fs.deleteField() : v;
-      await fs.setDoc(ref(path), { cells }, { merge: true });
+      const up = {};
+      for (const [k, v] of Object.entries(map)) up["cells." + k] = v == null ? fs.deleteField() : v;
+      try { await fs.updateDoc(ref(path), up); }
+      catch (e) {
+        if (e.code !== "not-found") throw e;
+        const cells = {}; for (const [k, v] of Object.entries(map)) if (v != null) cells[k] = v;
+        await fs.setDoc(ref(path), { cells }, { merge: true });
+      }
     },
     del(path) { return fs.deleteDoc(ref(path)); },
     watchList(col, field, op, val, cb) { return fs.onSnapshot(q(col, field, op, val), s => cb(rows(s)), e => onError(e)); },

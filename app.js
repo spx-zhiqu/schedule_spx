@@ -1,4 +1,4 @@
-import { createStore } from "./store.js?v=4";
+import { createStore } from "./store.js?v=5";
 
 /* =====================================================================
    智取店排班系統 v2
@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=4";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v54";
+const APP_VER = "v55";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -64,6 +64,10 @@ const empsOf = hub => emps().filter(e => eHubs(e).includes(hub));
 const allowed = e => (e.stores || []).length ? e.stores.filter(id => storeBy(id)) : eHubs(e).flatMap(h => storesOf(h).map(s => s.id));
 const canGo = (e, id) => allowed(e).includes(id);
 const cell = (ds, eid) => (S.months[ymOf(ds)] || {})[ds + "_" + eid] || null;
+// 同一天早晚雙班：第二個班放在 c.x（{ s, st, sp?, n? }）；onSh 取某一班的那一段
+const xOf = c => c && c.x && (c.x.s === "am" || c.x.s === "pm") && c.s !== "off" ? c.x : null;
+const onSh = (c, sh) => !c ? null : c.s === sh ? c : xOf(c)?.s === sh ? c.x : null;
+const allSt = c => [...(c?.st || []), ...(xOf(c)?.st || [])];
 // 每家店早晚都要排；只有標成「不排」的店（例：撤店）例外
 const isOff = s => s.off === true || (s.needAm === false && s.needPm === false);
 const needs = s => !isOff(s);
@@ -110,7 +114,8 @@ function coverage(ds, sh, src) {
   const cov = {};
   for (const e of emps()) {
     const c = src ? src(ds, e.id) : cell(ds, e.id);
-    if (c && c.s === sh && !c.tr) for (const st of c.st || []) (cov[st] ||= []).push(e);
+    const p = onSh(c, sh);
+    if (p && !p.tr) for (const st of p.st || []) (cov[st] ||= []).push(e);
   }
   return cov;
 }
@@ -352,22 +357,24 @@ function overviewHtml() {
 
 /* ---------- 班表（人 × 日期） ---------- */
 const SHICON = { am: "☀️ 早班", pm: "🌙 晚班" };
-function cellInner(c, av, hs, ds, src, eid) {
+function cellInner(c, av, hs, ds, src, eid, hs2) {
   if (!c) return avTag(av);
+  const x = xOf(c);
+  if (x) { const { x: _, ...a } = c; return cellInner(a, av, hs, ds, src, eid) + `<div class="dbl">${cellInner(x, null, hs2, ds, src, eid)}</div>`; }
   if (c.s === "off") return avTag(av) + `<span class="offt">休</span>`;
   // 實習：跟帶班人員同一班，門市照帶班人員當天的班（不算人力、不分時數）
   if (c.tr) {
-    const t = empBy(c.tr), tc = src && ds ? src(ds, c.tr) : null, ok = tc && tc.s === c.s;
+    const t = empBy(c.tr), tc = src && ds ? onSh(src(ds, c.tr), c.s) : null, ok = !!tc;
     return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="trn">🎓 實習・跟 ${esc(t?.name || "（已刪除）")}</div><div class="sts">${(ok ? tc.st : c.st || []).map(id => `<span class="st">${esc(sName(id))}</span>`).join("")}</div>${ok ? "" : `<div class="note" style="color:#b45309">帶班人員這班沒排班</div>`}` + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
   }
-  const kids = ds && src ? emps().filter(x => x.id !== eid && src(ds, x.id)?.tr === eid && src(ds, x.id)?.s === c.s) : [];
+  const kids = ds && src ? emps().filter(x => x.id !== eid && onSh(src(ds, x.id), c.s)?.tr === eid) : [];
   return avTag(av) + `<div class="shl">${SHICON[c.s]}</div><div class="sts">${(c.st || []).map((id, i) => `<span class="st ${(c.sp || []).includes(id) ? "spt" : ""}">${(c.sp || []).includes(id) ? "支援 " : ""}${esc(sName(id))}${hs && hs[i] ? `<small class="hrs">${fmtH(hs[i])}</small>` : ""}</span>`).join("")}</div>` + (kids.length ? `<div class="trn">🎓 帶 ${kids.map(x => esc(x.name)).join("、")}</div>` : "") + (c.n ? `<div class="note">${esc(c.n)}</div>` : "");
 }
 // 這格每家店的在店時數（一間一個）：每班在店時數；同一班同一家店排了幾個人就平分
 // 支援的店不顯示時數；同一家店有幾個「正式負責」的人（不含去支援的）就平分
 function cellHrs(c, ds, cov, src) {
   if (!c || !c.s || c.s === "off" || c.tr) return [];
-  return (c.st || []).map(id => (c.sp || []).includes(id) ? 0 : shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).filter(p => !(src(ds, p.id)?.sp || []).includes(id)).length));
+  return (c.st || []).map(id => (c.sp || []).includes(id) ? 0 : shHrs(storeBy(id)) / Math.max(1, (cov(ds, c.s)[id] || []).filter(p => !(onSh(src(ds, p.id), c.s)?.sp || []).includes(id)).length));
 }
 const SHIFT_GROUP = [["am", "☀️ 早班人員"], ["pm", "🌙 晚班人員"], ["any", "早晚都可"], ["tr", "🎓 實習人員"]];
 function personRows(list, days, src, changed) {
@@ -385,13 +392,14 @@ function personRows1(list, days, src, changed) {
       const on = c && c.s && c.s !== "off";
       run = on ? run + 1 : 0; maxRun = Math.max(maxRun, run);
       if (on) { const w = mondayOf(d.ds); wk[w] = (wk[w] || 0) + 1; }
-      if (on && c.s === "am" && prevS === "pm") tightN++;
-      prevS = on ? c.s : null;
-      if (c && c.s !== "off") { work++; cnt += (c.st || []).length; }
-      const bad = av && c && c.s !== "off" && avBad(av, c.s);
-      const ch = changed && changed(d.ds, e.id), h = cellHrs(c, d.ds, cov, src);
-      hrs += h.reduce((a, x) => a + x, 0);
-      return `<td class="c ${c?.s ? "s-" + c.s : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av, h, d.ds, src, e.id)}</td>`;
+      const x2 = xOf(c);
+      if (on && (c.s === "am" || x2?.s === "am") && prevS === "pm") tightN++;
+      prevS = on ? (x2?.s === "pm" ? "pm" : c.s) : null;
+      if (c && c.s !== "off") { work++; cnt += allSt(c).length; }
+      const bad = av && c && c.s !== "off" && (avBad(av, c.s) || (x2 && avBad(av, x2.s)));
+      const ch = changed && changed(d.ds, e.id), h = cellHrs(c, d.ds, cov, src), h2 = cellHrs(x2, d.ds, cov, src);
+      hrs += [...h, ...h2].reduce((a, x) => a + x, 0);
+      return `<td class="c ${c?.s ? "s-" + c.s : ""} ${x2 ? "s-dbl" : ""} ${bad ? "avbad" : ""} ${ch ? "chg" : ""} ${d.we ? "we" : ""}" ${src === cell && isAdmin() ? `data-act="editCell" data-e="${e.id}" data-ds="${d.ds}"` : ""} title="${esc(e.name + " " + dLabel(d.ds) + (av ? "\n" + AVL[av] : ""))}">${cellInner(c, av, h, d.ds, src, e.id, h2)}</td>`;
     }).join("");
     // 提醒：超過每週天數上限、連續上班太久、晚班隔天接早班（只是標示，不會擋）
     const warn = [], wkOver = Object.values(wk).filter(n => n > weekCap(e)).length;
@@ -411,7 +419,7 @@ function missRow(days, src) {
 function rowsFor(days, src) {
   const own = empsOf(S.hub).filter(e => e.active !== false || days.some(d => src(d.ds, e.id)));
   const ids = new Set(storesOf(S.hub).map(s => s.id));
-  const help = emps().filter(e => !eHubs(e).includes(S.hub) && days.some(d => (src(d.ds, e.id)?.st || []).some(x => ids.has(x))));
+  const help = emps().filter(e => !eHubs(e).includes(S.hub) && days.some(d => allSt(src(d.ds, e.id)).some(x => ids.has(x))));
   return [...own, ...help];
 }
 function gridHtml() {
@@ -430,7 +438,7 @@ function gridHtml() {
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
     <button class="icon-btn" data-act="month" data-n="-1">‹</button><b style="font-size:16px">${y}年${+m}月</b><button class="icon-btn" data-act="month" data-n="1">›</button>
-    <span class="spacer"></span>${isAdmin() ? '<button class="btn" data-act="pubSched" title="把這個月的班表發布到員工查班表網頁">發布給員工</button><button class="btn" data-act="pubLink">複製查班網址</button>' : ""}<button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
+    <span class="spacer"></span>${isAdmin() ? '<label class="btn" title="把排班 Excel（每間主要門市一段「XX店-早班／晚班」）匯入這個月">匯入班表 Excel<input type="file" data-ch="schedImp" accept=".xlsx,.xls" hidden></label>' : ""}${isAdmin() ? '<button class="btn" data-act="pubSched" title="把這個月的班表發布到員工查班表網頁">發布給員工</button><button class="btn" data-act="pubLink">複製查班網址</button>' : ""}<button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
 }
 
 /* ---------- 自動排班 ---------- */
@@ -538,10 +546,10 @@ function autoPlan() {
   const working = c => c && c.s && c.s !== "off";
   const daysInWeek = (eid, ds) => { const w = mondayOf(ds); let k = 0; for (let i = 0; i < 7; i++) { const d = addDays(w, i); if (d !== ds && working(get(d, eid))) k++; } return k; };
   const streak = (eid, ds) => { let k = 0, d = addDays(ds, -1); while (k < 14 && working(get(d, eid))) { k++; d = addDays(d, -1); } return k; };
-  const lastStores = (eid, ds, sh) => { const c = get(addDays(ds, -1), eid); return c && c.s === sh ? c.st || [] : []; };
+  const lastStores = (eid, ds, sh) => onSh(get(addDays(ds, -1), eid), sh)?.st || [];
   const own = new Set(hubStores.map(s => s.id));
   // 這格是不是排在「別間主要門市」的店（多間主要門市的人）→ 不能動、當天也不能再排
-  const elsewhere = c => c && c.s && c.s !== "off" && (c.st || []).some(id => !own.has(id));
+  const elsewhere = c => c && c.s && c.s !== "off" && allSt(c).some(id => !own.has(id));
   // 不保留：先把這段期間的格子清空（排在別間主要門市的班不動）
   if (!keep) for (const ds of days) for (const e of people) if (!elsewhere(cell(ds, e.id)) && !cell(ds, e.id)?.tr) plan[ds + "_" + e.id] = null;
   for (const ds of days) {
@@ -1043,6 +1051,7 @@ const CH = {
     patchEmp(e.id, { stores: same ? [] : stores().map(s => s.id).filter(id => set.has(id)) });
   },
   restore: t => { const f = t.files[0]; t.value = ""; if (f) restore(f); },
+  schedImp: t => { const f = t.files[0]; t.value = ""; if (f) importSchedFile(f); },
   maxSh: t => saveMaster({ rules: { ...rules(), [t.dataset.k]: +t.value } }),
   supBelow: t => saveMaster({ rules: { ...rules(), supBelow: t.value === "" ? 0 : +t.value } }),
   rtSup: t => { const v = t.value; if (v) editRoute(t.dataset.k, t.dataset.id, r => { r.sup = [...(r.sup || []), v]; }); },
@@ -1092,34 +1101,50 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = fal
 function openCellEditor(eid, ds) {
   const e = empBy(eid), c = cell(ds, eid) || {}, av = avOf(ds, eid);
   let s = c.tr ? "tr" : c.s || "", sel = new Set(c.st || []), tr = c.tr || "";
+  // 雙班：同一天另外再排一個班（早＋晚）
+  let x2on = !!xOf(c), sel2 = new Set(xOf(c)?.st || []), note1 = c.n || "", note2 = xOf(c)?.n || "";
+  const keepNotes = () => { const a = m.querySelector("#ceNote"), b = m.querySelector("#ceNote2"); if (a) note1 = a.value; if (b) note2 = b.value; };
   const draw = () => {
     const own = (eHubs(e).length ? eHubs(e) : [S.hub]).flatMap(storesOf), other = stores().filter(x => !own.includes(x));
-    const cov = s === "am" || s === "pm" ? coverage(ds, s) : {};
-    const btn = x => { const by = (cov[x.id] || []).filter(p => p.id !== eid); return `<button class="pbtn ${sel.has(x.id) ? "on" : ""} ${needs(x, s) && !by.length && !sel.has(x.id) ? "need" : ""}" data-st="${x.id}">${esc(x.name)}${by.length ? `<small>${esc(by.map(p => p.name).join("、"))}</small>` : needs(x, s) ? "<small>沒人</small>" : ""}</button>`; };
+    const o = s === "am" ? "pm" : "am";
+    const cov = s === "am" || s === "pm" ? coverage(ds, s) : {}, cov2 = coverage(ds, o);
+    const mk = (cv, sh, set, key) => x => { const by = (cv[x.id] || []).filter(p => p.id !== eid); return `<button class="pbtn ${set.has(x.id) ? "on" : ""} ${needs(x, sh) && !by.length && !set.has(x.id) ? "need" : ""}" data-${key}="${x.id}">${esc(x.name)}${by.length ? `<small>${esc(by.map(p => p.name).join("、"))}</small>` : needs(x, sh) ? "<small>沒人</small>" : ""}</button>`; };
+    const btn = mk(cov, s, sel, "st"), btn2 = mk(cov2, o, sel2, "st2");
+    const dbl = `<div class="dblbox"><label class="small"><input type="checkbox" id="ceX" ${x2on ? "checked" : ""}> 同一天另外排${SHIFT[o]}（雙班）</label>
+      ${x2on ? `<div class="picker" style="margin-top:6px">${own.map(btn2).join("")}</div>
+        ${other.length ? `<details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">其他主要門市的門市（支援）</summary><div class="picker" style="margin-top:6px">${other.map(btn2).join("")}</div></details>` : ""}
+        <input type="text" id="ceNote2" placeholder="${SHIFT[o]}備註（選填）" value="${esc(note2)}" style="width:100%;margin-top:8px">` : ""}</div>`;
     m.innerHTML = `<h2>${esc(e.name)}・${dLabel(ds)}</h2>
       ${av ? `<div class="avline">${AVL[av]}</div>` : ""}
       <div class="seg" style="margin:8px 0">${[["", "清空"], ["off", "休"], ["am", "早班"], ["pm", "晚班"], ["tr", "🎓 實習"]].map(([k, v]) => `<button class="${s === k ? "on" : ""}" data-s="${k}">${v}</button>`).join("")}</div>
       ${s === "tr" ? (() => { const ws = emps().filter(x => x.id !== eid && !x.trainee && (() => { const y = cell(ds, x.id); return y && (y.s === "am" || y.s === "pm") && !y.tr; })());
         return `<div class="sub">選帶班人員（這天有上班的人）：新人會跟他同一班、跑一樣的門市</div><div class="picker">${ws.map(x => { const y = cell(ds, x.id); return `<button class="pbtn ${tr === x.id ? "on" : ""}" data-tr="${x.id}">${esc(x.name)}<small>${SH1[y.s]}班 ${esc((y.st || []).map(sName).join("、"))}</small></button>`; }).join("") || `<span class="muted small">這天還沒有人排班，先排好帶班人員的班再來安排實習</span>`}</div>
-        <input type="text" id="ceNote" placeholder="備註（選填，例：第 3 天實習）" value="${esc(c.n || "")}" style="width:100%;margin-top:10px">`; })() : ""}
+        <input type="text" id="ceNote" placeholder="備註（選填，例：第 3 天實習）" value="${esc(note1)}" style="width:100%;margin-top:10px">`; })() : ""}
       ${s === "am" || s === "pm" ? `<div class="sub">選負責的門市（紅框＝這班還沒人負責）</div><div class="picker">${own.map(btn).join("")}</div>
         ${other.length ? `<details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">其他主要門市的門市（支援）</summary><div class="picker" style="margin-top:6px">${other.map(btn).join("")}</div></details>` : ""}
-        <input type="text" id="ceNote" placeholder="備註（選填）" value="${esc(c.n || "")}" style="width:100%;margin-top:10px">` : ""}
+        <input type="text" id="ceNote" placeholder="備註（選填）" value="${esc(note1)}" style="width:100%;margin-top:10px">${dbl}` : ""}
       <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="save">儲存</button></div>`;
   };
   const m = openModal("", "");
   draw();
   m.onclick = async ev => {
+    if (ev.target.id === "ceX") { keepNotes(); x2on = ev.target.checked; draw(); return; }
     const b = ev.target.closest("button"); if (!b) return;
-    if (b.dataset.s !== undefined) { s = b.dataset.s; draw(); return; }
-    if (b.dataset.st) { sel.has(b.dataset.st) ? sel.delete(b.dataset.st) : sel.add(b.dataset.st); draw(); return; }
-    if (b.dataset.tr) { tr = b.dataset.tr; draw(); return; }
+    if (b.dataset.s !== undefined) { keepNotes(); if ((s === "am" || s === "pm") && (b.dataset.s === "am" || b.dataset.s === "pm") && b.dataset.s !== s) sel2 = new Set(); s = b.dataset.s; draw(); return; }
+    if (b.dataset.st) { keepNotes(); sel.has(b.dataset.st) ? sel.delete(b.dataset.st) : sel.add(b.dataset.st); draw(); return; }
+    if (b.dataset.st2) { keepNotes(); sel2.has(b.dataset.st2) ? sel2.delete(b.dataset.st2) : sel2.add(b.dataset.st2); draw(); return; }
+    if (b.dataset.tr) { keepNotes(); tr = b.dataset.tr; draw(); return; }
     if (b.dataset.x === "cancel") return closeModal();
     if (b.dataset.x === "save") {
       const note = (m.querySelector("#ceNote")?.value || "").trim();
       if (s === "tr" && !tr) return toast("請選帶班人員");
       const tc = s === "tr" ? cell(ds, tr) : null;
       const v = !s ? null : s === "off" ? { s: "off", st: [] } : s === "tr" ? { s: tc.s, st: [...(tc.st || [])], tr, ...(note ? { n: note } : {}) } : { s, st: [...sel], ...(note ? { n: note } : {}) };
+      if ((s === "am" || s === "pm") && x2on) {
+        if (!sel2.size) return toast(`雙班請選${SHIFT[s === "am" ? "pm" : "am"]}要跑的門市，或取消勾選`);
+        const n2 = (m.querySelector("#ceNote2")?.value || "").trim();
+        v.x = { s: s === "am" ? "pm" : "am", st: [...sel2], ...(n2 ? { n: n2 } : {}) };
+      }
       if (await writeCell(ds, eid, v)) closeModal();
     }
   };
@@ -1129,10 +1154,10 @@ function openAssign(storeId, ds, sh) {
   const st = storeBy(storeId), cov = coverage(ds, sh)[storeId] || [];
   const pool = emps().filter(e => e.active !== false);
   const rowsOf = list => list.map(e => {
-    const c = cell(ds, e.id), av = avOf(ds, e.id), on = c?.s === sh, has = on && (c.st || []).includes(storeId);
-    const busy = c && c.s && c.s !== sh && c.s !== "off";
-    const info = has ? "已負責" : on ? `已排：${(c.st || []).map(sName).join("、")}` : c?.s === "off" ? "排休" : busy ? `已排${SHIFT[c.s]}` : "還沒排";
-    return `<button class="pbtn ${has ? "on" : ""}" data-e="${e.id}" ${busy || has ? "disabled" : ""}>${esc(e.name)}${avTag(av)}<small>${esc(info)}</small></button>`;
+    const c = cell(ds, e.id), av = avOf(ds, e.id), p = onSh(c, sh), has = !!p && (p.st || []).includes(storeId);
+    const busy = c && c.s && c.s !== "off" && !p;
+    const info = has ? "已負責" : p ? `已排：${(p.st || []).map(sName).join("、")}` : c?.s === "off" ? "排休" : busy ? `已排${SHIFT[c.s]}（點了會加排雙班）` : "還沒排";
+    return `<button class="pbtn ${has ? "on" : ""}" data-e="${e.id}" ${has ? "disabled" : ""}>${esc(e.name)}${avTag(av)}<small>${esc(info)}</small></button>`;
   }).join("");
   const own = pool.filter(e => eHubs(e).includes(st.hub) && (!e.shift || e.shift === "any" || e.shift === sh)), other = pool.filter(e => !own.includes(e));
   const m = openModal(`<h2>${esc(st.name)}・${dLabel(ds)} ${SHIFT[sh]}</h2>
@@ -1145,7 +1170,8 @@ function openAssign(storeId, ds, sh) {
     if (b.dataset.x) return closeModal();
     const eid = b.dataset.e; if (!eid) return;
     const c = cell(ds, eid);
-    const v = c?.s === sh ? { ...c, st: [...new Set([...(c.st || []), storeId])] } : { s: sh, st: [storeId] };
+    const add = p => ({ ...p, st: [...new Set([...(p.st || []), storeId])] });
+    const v = c?.s === sh ? add(c) : xOf(c)?.s === sh ? { ...c, x: add(c.x) } : c && c.s && c.s !== "off" && !c.tr ? { ...c, x: { s: sh, st: [storeId] } } : { s: sh, st: [storeId] };
     if (await writeCell(ds, eid, v)) { closeModal(); toast(`已指派 ${empBy(eid).name}`); }
   };
 }
@@ -1419,7 +1445,8 @@ async function loadXLSX() {
 }
 async function exportExcel() {
   const X = await loadXLSX(), wb = X.utils.book_new(), days = monthDays(S.ym), hubN = hubBy(S.hub)?.name || "";
-  const txt = c => !c ? "" : c.s === "off" ? "休" : `${c.tr ? `實習（跟${empBy(c.tr)?.name || ""}）` : ""}${SH1[c.s]} ${(c.st || []).map(sName).join("、")}${c.n ? `（${c.n}）` : ""}`;
+  const txt1 = c => !c ? "" : c.s === "off" ? "休" : `${c.tr ? `實習（跟${empBy(c.tr)?.name || ""}）` : ""}${SH1[c.s]} ${(c.st || []).map(sName).join("、")}${c.n ? `（${c.n}）` : ""}`;
+  const txt = c => xOf(c) ? txt1(c) + "\n" + txt1(c.x) : txt1(c);
   const rows = [[hubN, ...days.map(d => `${d.d}(${d.wd})`)]];
   for (const e of rowsFor(days, cell)) rows.push([e.name, ...days.map(d => txt(cell(d.ds, e.id)))]);
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(rows), "班表");
@@ -1460,14 +1487,15 @@ async function exportApollo() {
       let c = cell(d.ds, e.id);
       if (!c || !c.s) continue;
       if (!e.code) { noCode.add(e.name); continue; }
-      let hrs = 0;
-      if (c.s !== "off") {
-        // 實習：沿用帶班人員當天的時數
-        const m = c.tr ? cell(d.ds, c.tr) : c;
-        hrs = m && m.s === c.s ? cellHrs(m, d.ds, cov, cell).reduce((a, b) => a + b, 0) : 0;
+      if (c.s === "off") { rows.push(apolloRow(e.code, e.name, d.ds, c, 0)); continue; }
+      // 雙班：早、晚各一列
+      for (const part of [c, xOf(c)].filter(Boolean)) {
+        // 實習：沿用帶班人員當天同一班的時數
+        const m = part.tr ? onSh(cell(d.ds, part.tr), part.s) : part;
+        let hrs = m ? cellHrs(m, d.ds, cov, cell).reduce((a, b) => a + b, 0) : 0;
         if (!(hrs > 0)) { hrs = APOLLO.noHours; noHrs.push(`${e.name} ${d.ds.slice(4, 6)}/${d.ds.slice(6, 8)}`); }
+        rows.push(apolloRow(e.code, e.name, d.ds, part, hrs));
       }
-      rows.push(apolloRow(e.code, e.name, d.ds, c, hrs));
     }
   }
   if (!rows.length) return toast("這個月沒有可匯出的班表（或人員都沒有工號）");
@@ -1482,6 +1510,144 @@ async function exportApollo() {
   X.writeFile(wb, `Apollo匯入_${hubN}_${S.ym}.xlsx`);
   toast(`已匯出 ${rows.length} 列${warn.length ? "（有提醒，請確認）" : ""}`);
 }
+// ───────── 匯入排班 Excel（新莊排班表格式）─────────
+// 讀「新莊排班表」格式（每間主要門市一段「XX店-早班／晚班」，B 欄姓名、C 欄起每天一格）
+function parseSchedBook(X, buf, ym, ctx) {
+  const { hubs, stores, emps } = ctx;
+  const wb = X.read(buf, { type: "array" });
+  const norm = s => String(s || "").replace(/\s+/g, "").replace(/^新莊/, "").replace(/店$/, "");
+  const hubOf = t => { const k = norm(t); return hubs.find(h => norm(h.name) === k) || hubs.find(h => norm(h.name).includes(k) || k.includes(norm(h.name))); };
+  const byLen = [...stores].sort((a, b) => b.name.length - a.name.length);
+  const [Y, Mo] = ym.split("-").map(Number), nDays = new Date(Y, Mo, 0).getDate();
+  const toDs = d => `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+  const serial = v => v instanceof Date ? Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()) : typeof v === "number" ? Date.UTC(1899, 11, 30) + Math.round(v) * 864e5 : null;
+  const out = { rows: [], unknownHub: [], unknownSt: {}, sheet: "" };
+  for (const sn of wb.SheetNames) {
+    const a = X.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: null });
+    if (!a.some(r => r && r[1] === "門市人員")) continue;
+    out.sheet = sn;
+    let hub = null, sh = null, base = null, inBlock = false;
+    for (const r of a) {
+      if (!r) { inBlock = false; continue; }
+      const c0 = String(r[0] ?? "").trim(), c1 = String(r[1] ?? "").trim();
+      const tm = c0.match(/^(.+?)[-－—]\s*(早班|晚班)/);
+      if (tm) { const h = hubOf(tm[1]); hub = h?.id || null; sh = tm[2] === "早班" ? "am" : "pm"; if (!h) out.unknownHub.push(tm[1]); inBlock = false; continue; }
+      if (c1 === "門市人員") { base = serial(r[2]); inBlock = base != null; continue; }
+      if (!inBlock) continue;
+      if (!c1) { if (r.slice(2).every(v => v == null || v === "")) inBlock = false; continue; }
+      if (/^[一二三四五六日]$/.test(String(r[2] ?? ""))) continue;
+      const days = {};
+      for (let i = 2; i < r.length; i++) {
+        const v = r[i]; if (v == null || String(v).trim() === "") continue;
+        const d = new Date(base + (i - 2) * 864e5);
+        if (d.getUTCFullYear() !== Y || d.getUTCMonth() + 1 !== Mo) continue;
+        days[toDs(d)] = String(v).trim();
+      }
+      out.rows.push({ name: c1, wage: c0, hub, sh, days });
+    }
+    break;
+  }
+  if (!out.sheet) return { error: "找不到排班表（要有「門市人員」那一列）" };
+  // 姓名對應：全名直接對；兩個字的小名對到全名結尾相同的人（系統名單優先，再找檔案裡的全名）
+  const fileFull = [...new Set(out.rows.map(r => r.name).filter(n => n.length >= 3))];
+  const resolve = n => {
+    const e = emps.find(x => x.name === n); if (e) return { emp: e, name: n };
+    if (n.length <= 2) {
+      const es = emps.filter(x => x.name.length > n.length && x.name.endsWith(n)); if (es.length === 1) return { emp: es[0], name: es[0].name };
+      const fs = fileFull.filter(x => x.endsWith(n)); if (fs.length === 1) { const e2 = emps.find(x => x.name === fs[0]); return e2 ? { emp: e2, name: fs[0] } : { name: fs[0] }; }
+    }
+    return { name: n };
+  };
+  const parseCell = (t, sh0, hub) => {
+    if (/^[xX×✕]$/.test(t) || /^(休|例休|休假|特休|請假|病假|事假|喪假|婚假|公休)/.test(t)) return { s: "off", st: [] };
+    let s = sh0;
+    if (/[（(]\s*早\s*[)）]/.test(t)) s = "am"; else if (/[（(]\s*晚\s*[)）]/.test(t)) s = "pm";
+    const sup = /支援/.test(t);
+    const body = t.replace(/[（(][^)）]*[)）]/g, " ").replace(/\+?\s*支援/g, " ");
+    const ids = [], bad = [];
+    for (let tok of body.split(/[\s、,，+＋\/／]+/).filter(Boolean)) {
+      while (tok) { const m = byLen.find(x => tok.startsWith(x.name)); if (!m) { bad.push(tok); break; } if (!ids.includes(m.id)) ids.push(m.id); tok = tok.slice(m.name.length); }
+    }
+    if (!ids.length && bad.length && bad.every(b => /^(早|晚)班?$/.test(b))) return null;
+    bad.forEach(b => out.unknownSt[b] = (out.unknownSt[b] || 0) + 1);
+    if (!ids.length && !bad.length) return null;
+    const c = { s, st: ids };
+    if (sup) { const sp = ids.filter(id => stores.find(x => x.id === id)?.hub !== hub); if (sp.length && sp.length < ids.length) c.sp = sp; }
+    if (bad.length || (sup && !c.sp)) c.n = t;
+    return c;
+  };
+  const people = new Map();
+  let dbl = 0;
+  for (const r of out.rows) {
+    const res = resolve(r.name), key = res.emp ? res.emp.id : "new:" + res.name;
+    let p = people.get(key);
+    if (!p) people.set(key, p = { key, emp: res.emp || null, name: res.name, hub: r.hub, wage: r.wage, sh: r.sh, cells: {}, alias: new Set() });
+    if (r.name !== res.name) p.alias.add(r.name);
+    if (!p.wage && r.wage) { p.wage = r.wage; p.hub = r.hub; p.sh = r.sh; }
+    for (const [ds, t] of Object.entries(r.days)) {
+      const c = parseCell(t, r.sh, r.hub); if (!c) continue;
+      const old = p.cells[ds];
+      if (!old || old.s === "off") { if (!(old && c.s === "off")) p.cells[ds] = c; continue; }
+      if (c.s === "off") continue;
+      if (c.s === old.s) { c.st.forEach(id => old.st.includes(id) || old.st.push(id)); continue; }
+      // 同一天早晚都有排：存成雙班（第二個班放 x）
+      if (old.x) { if (old.x.s === c.s) c.st.forEach(id => old.x.st.includes(id) || old.x.st.push(id)); continue; }
+      old.x = c; dbl++;
+    }
+  }
+  // 雙班一律早班在前、晚班放 x
+  for (const p of people.values()) for (const [ds, c] of Object.entries(p.cells)) if (c.x && c.s === "pm") { const { x, ...a } = c; p.cells[ds] = { ...x, x: a }; }
+  return { sheet: out.sheet, unknownHub: [...new Set(out.unknownHub)], unknownSt: out.unknownSt, people: [...people.values()], dbl, nDays };
+}
+
+async function importSchedFile(file) {
+  const ym = S.ym;
+  let r;
+  try { const X = await loadXLSX(); r = parseSchedBook(X, await file.arrayBuffer(), ym, { hubs: hubs(), stores: stores(), emps: emps() }); }
+  catch (e) { return toast("讀取失敗：" + e.message); }
+  if (r.error) return toast(r.error);
+  const ppl = r.people.filter(p => Object.keys(p.cells).length);
+  const known = ppl.filter(p => p.emp), fresh = ppl.filter(p => !p.emp);
+  const nCells = ppl.reduce((n, p) => n + Object.keys(p.cells).length, 0);
+  const unk = Object.entries(r.unknownSt).sort((a, b) => b[1] - a[1]);
+  const [y, mo] = ym.split("-");
+  const m = openModal(`<h2>匯入 ${y}年${+mo}月 班表</h2>
+    <div class="sub">讀「${esc(r.sheet)}」分頁，只匯入 ${+mo} 月的日子（檔案裡其他月份不會動）。</div>
+    <ul class="small" style="line-height:1.9;padding-left:18px">
+      <li><b>${ppl.length}</b> 人、<b>${nCells}</b> 格（含休假）；其中 <b>${r.dbl}</b> 格是同一天早＋晚雙班</li>
+      <li>已在人員名單：${known.length} 人</li>
+      ${fresh.length ? `<li style="color:#b45309">名單上沒有的 ${fresh.length} 人：${fresh.map(p => esc(p.name) + (p.alias.size ? `（${esc([...p.alias].join("、"))}）` : "")).join("、")}</li>` : ""}
+      ${r.unknownHub.length ? `<li style="color:#b91c1c">對不到主要門市：${r.unknownHub.map(esc).join("、")}</li>` : ""}
+      ${unk.length ? `<li style="color:#b91c1c">對不到的門市名稱（會寫在格子備註）：${unk.map(([k, n]) => `${esc(k)}×${n}`).join("、")}</li>` : ""}
+    </ul>
+    ${fresh.length ? `<label class="small"><input type="checkbox" id="siNew" checked> 自動新增名單上沒有的人（主要門市照 Excel 區塊）</label><br>` : ""}
+    <label class="small"><input type="checkbox" id="siClr"> 先清掉這些人 ${+mo} 月原本的班（Excel 空白的日子會變空白）</label>
+    <p class="small muted">小名（例如「佳緯」）會對到同一個人的全名；「X」＝休；「(早)」「(晚)」會改成那一班；寫「支援」的格子，別間主要門市的店標成支援。</p>
+    <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">匯入</button></div>`);
+  m.onclick = async ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    if (b.dataset.x === "cancel") return closeModal();
+    if (b.dataset.x !== "go") return;
+    const addNew = !!m.querySelector("#siNew")?.checked, clr = !!m.querySelector("#siClr")?.checked;
+    b.disabled = true;
+    try {
+      const idOf = new Map(known.map(p => [p.key, p.emp.id]));
+      if (addNew && fresh.length) {
+        const add = fresh.map(p => ({ id: uid("e"), name: p.name, code: "", hubs: [p.hub || S.hub], shift: /早班/.test(p.wage) ? "am" : /晚班/.test(p.wage) ? "pm" : "any", active: true }));
+        fresh.forEach((p, i) => idOf.set(p.key, add[i].id));
+        await S.store.set(P("cfg", "employees"), { list: [...emps(), ...add] });
+      }
+      const map = {}, days = monthDays(ym).map(d => d.ds);
+      for (const p of ppl) {
+        const eid = idOf.get(p.key); if (!eid) continue;
+        if (clr) for (const ds of days) if (cell(ds, eid)) map[ds + "_" + eid] = null;
+        for (const [ds, c] of Object.entries(p.cells)) map[ds + "_" + eid] = c;
+      }
+      await S.store.setCells(P("months", ym), map);
+      closeModal(); toast(`已匯入 ${Object.values(map).filter(Boolean).length} 格`);
+    } catch (e) { b.disabled = false; toast("匯入失敗：" + e.message); }
+  };
+}
 // ───────── 發布班表給員工（員工用 schedule.html?r=區域代碼 免登入查班） ─────────
 // 寫到 regions/{區域}/pub/{yyyy-mm}（firestore.rules 要允許任何人讀、主管寫）。
 // 只放姓名、班別、門市名稱；各人的天數用陣列（第 i 格＝當月第 i+1 天），每人整段覆蓋、不同主要門市分開發布也不會互相蓋掉。
@@ -1490,10 +1656,15 @@ function pubEntry(e, ds) {
   const c = cell(ds, e.id);
   if (!c || !c.s) return null;
   if (c.s === "off") return { s: "off" };
-  // 實習：門市照帶班人員當天的班
-  const tc = c.tr ? cell(ds, c.tr) : null, m = tc && tc.s === c.s ? tc : c;
-  const sp = m.sp || [], out = { s: c.s, st: (m.st || []).filter(id => !sp.includes(id)).map(sName), sp: (m.st || []).filter(id => sp.includes(id)).map(sName) };
-  if (c.tr) out.tr = empBy(c.tr)?.name || "";
+  const one = c => {
+    // 實習：門市照帶班人員當天同一班
+    const m = (c.tr && onSh(cell(ds, c.tr), c.s)) || c;
+    const sp = m.sp || [], out = { s: c.s, st: (m.st || []).filter(id => !sp.includes(id)).map(sName), sp: (m.st || []).filter(id => sp.includes(id)).map(sName) };
+    if (c.tr) out.tr = empBy(c.tr)?.name || "";
+    return out;
+  };
+  const out = one(c), x = xOf(c);
+  if (x) out.x = one(x);
   return out;
 }
 async function publishSchedule() {
