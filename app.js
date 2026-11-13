@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v57";
+const APP_VER = "v59";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -49,17 +49,20 @@ const rules = () => { const r = { ...DEFAULT_RULES, ...(M().rules || {}) }; if (
 const weekCap = e => { const v = +e?.maxDays > 0 ? +e.maxDays : +rules().maxDays > 0 ? +rules().maxDays : 7; return Math.min(7, v); };
 const consecCap = () => +rules().maxConsec > 0 ? +rules().maxConsec : Infinity;
 const hubs = () => M().hubs || [];
-const hubBy = id => hubs().find(h => h.id === id);
+// 「全部門市」：主要門市選單選 ALL 時，門市／人員／路線都看全部
+const ALL = "*";
+const hubBy = id => id === ALL ? { id: ALL, name: "全部門市" } : hubs().find(h => h.id === id);
 const stores = () => M().stores || [];
 const storeBy = id => stores().find(s => s.id === id);
-const storesOf = hub => stores().filter(s => s.hub === hub);
+const storesOf = hub => hub === ALL ? stores() : stores().filter(s => s.hub === hub);
 const sName = id => storeBy(id)?.name || "（已刪除）";
 const emps = () => S.emps || [];
 const empBy = id => emps().find(e => e.id === id);
 // 一個人可以有多間主要門市（舊資料是單一 hub 字串）
-const eHubs = e => Array.isArray(e?.hubs) ? e.hubs.filter(h => hubBy(h)) : e?.hub && hubBy(e.hub) ? [e.hub] : [];
+const eHubs = e => Array.isArray(e?.hubs) ? e.hubs.filter(h => h !== ALL && hubBy(h)) : e?.hub && e.hub !== ALL && hubBy(e.hub) ? [e.hub] : [];
 const hubNames = e => eHubs(e).map(h => hubBy(h).name).join("、");
-const empsOf = hub => emps().filter(e => eHubs(e).includes(hub));
+const empsOf = hub => hub === ALL ? emps().filter(e => eHubs(e).length) : emps().filter(e => eHubs(e).includes(hub));
+const realHub = () => S.hub === ALL ? hubs()[0]?.id || null : S.hub;
 // 可以去的門市：有勾「可支援門市」就照勾的；沒勾＝自己主要門市底下全部
 const allowed = e => (e.stores || []).length ? e.stores.filter(id => storeBy(id)) : eHubs(e).flatMap(h => storesOf(h).map(s => s.id));
 const canGo = (e, id) => allowed(e).includes(id);
@@ -91,7 +94,7 @@ const supBelow = () => rules().supBelow === undefined ? 2.5 : +rules().supBelow 
 const RSET = { wd_am: "早班", wd_pm: "晚班" };
 const allRoutes = k => (M().routes || {})[k] || [];
 const routeHub = rt => storeBy(rt.st?.[0])?.hub;
-const routesOf = (k, hub) => allRoutes(k).filter(rt => routeHub(rt) === hub || (!rt.st?.length && rt.hub === hub));
+const routesOf = (k, hub) => hub === ALL ? allRoutes(k) : allRoutes(k).filter(rt => routeHub(rt) === hub || (!rt.st?.length && rt.hub === hub));
 // 某天某班要用的路線（早班一套、晚班一套，不分平日假日）
 const routesFor = (ds, sh, hub) => routesOf("wd_" + sh, hub);
 const rtHrs = rt => (rt.st || []).reduce((n, id) => n + shHrs(storeBy(id)), 0);
@@ -156,7 +159,7 @@ async function init() {
   S.autoStart = mondayOf(addDays(todayDs(), 7)); S.autoDays = 14;
   S.tab = ls.get("zq2-tab") || "home";
   S.rset = ls.get("zq2-rset") || "wd_am";
-  S.dense = ls.get("zq2-dense") !== "0";   // 班表預設精簡顯示
+  S.dense = true;   // 班表只用精簡顯示
   try { S.store = await createStore(); }
   catch (e) { main.innerHTML = `<div class="card">無法連線到 Firebase：${esc(e.message)}</div>`; return; }
   if (S.store.mode === "local") { const b = $("#banner"); b.hidden = false; b.innerHTML = "目前是<b>本機試用模式</b>：資料只存在這台電腦的瀏覽器。"; }
@@ -273,7 +276,7 @@ function renderTop() {
   const regionSel = S.regions && S.regions.length > 1
     ? `<select id="regionSel" title="區域">${S.regions.map(r => `<option value="${r.id}" ${r.id === S.rid ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>`
     : S.reg ? `<span class="rname">${esc(S.reg.name)}</span>` : "";
-  const hubSel = S.rid && hubs().length ? `<label class="hubpick">主要門市 <select id="hubSel">${hubs().map(h => `<option value="${h.id}" ${h.id === S.hub ? "selected" : ""}>${esc(h.name)}</option>`).join("")}</select></label>` : "";
+  const hubSel = S.rid && hubs().length ? `<label class="hubpick">主要門市 <select id="hubSel">${hubs().length > 1 ? `<option value="${ALL}" ${S.hub === ALL ? "selected" : ""}>全部門市</option>` : ""}${hubs().map(h => `<option value="${h.id}" ${h.id === S.hub ? "selected" : ""}>${esc(h.name)}</option>`).join("")}</select></label>` : "";
   const user = !S.user ? "" : `<span class="role">${S.store.mode === "local" ? "本機試用" : isOwner() ? "最高管理者" : isAdmin() ? "主管" : "檢視"}</span>${S.store.mode === "local" ? "" : `<button class="btn small" id="logout" title="${esc(S.user.email)}">登出</button>`}`;
   box.innerHTML = `${regionSel}${hubSel}<span class="spacer"></span><span class="user-box">${user}<span class="muted small" title="網站版本">${APP_VER}</span></span>`;
 }
@@ -371,12 +374,13 @@ function cellDense(c, av, hs, ds, src, eid, hs2) {
     }
     const ids = p.st || [], sp = p.sp || [], tot = (h || []).reduce((a, x) => a + x, 0), code = routeCode(p);
     const kids = ds && src ? emps().filter(x => x.id !== eid && onSh(src(ds, x.id), p.s)?.tr === eid) : [];
-    return `<div class="dl"><b class="pill p-${p.s}">${SH1[p.s]} ${ids.length - sp.length}間</b>${code ? `<span class="rc">${esc(code)}</span>` : ""}${tot ? `<span class="dh">${fmt1(tot)}h</span>` : ""}${p.n ? `<span class="nt" title="${esc(p.n)}">✎</span>` : ""}</div>`
-      + `<div class="dn">${ids.map((id, i) => sp.includes(id) ? `<div class="spn">+${esc(sName(id))}<small>支援</small></div>` : `<div>${esc(sName(id))}${h && h[i] ? `<small>${fmtH(h[i])}</small>` : ""}</div>`).join("")}</div>`
+    return `<div class="dn">${ids.map((id, i) => sp.includes(id) ? `<div class="spn">+${esc(sName(id))}<small>支援</small></div>` : `<div>${esc(sName(id))}${h && h[i] ? `<small>${fmtH(h[i])}</small>` : ""}</div>`).join("")}</div>`
+      + (p.n ? `<div class="nt" title="${esc(p.n)}">✎ ${esc(p.n.length > 8 ? p.n.slice(0, 8) + "…" : p.n)}</div>` : "")
       + (kids.length ? `<div class="dh trn">🎓帶${kids.map(k => esc(k.name)).join("、")}</div>` : "");
   };
   const x = xOf(c);
-  return avTag(av) + part(c, hs) + (x ? `<div class="dsep"></div>` + part(x, hs2) : "");
+  // 雙班：上下兩段，第二段用晚班（或早班）顏色、標一個小字
+  return avTag(av) + part(c, hs) + (x ? `<div class="dsep"></div><div class="d2 d2-${x.s}"><span class="d2t">${SH1[x.s]}</span>${part(x, hs2)}</div>` : "");
 }
 function cellInner(c, av, hs, ds, src, eid, hs2) {
   if (S.dense) return cellDense(c, av, hs, ds, src, eid, hs2);
@@ -428,7 +432,7 @@ function personRows1(list, days, src, changed) {
     if (wkOver) warn.push(`${wkOver} 週超過每週 ${weekCap(e)} 天`);
     if (maxRun > consecCap()) warn.push(`連續上班 ${maxRun} 天（上限 ${consecCap()}）`);
     if (tightN) warn.push(`${tightN} 次晚班隔天接早班`);
-    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? `${S.dense ? "<br>" : " "}<span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span>${hrs ? `<br><span class="small">在店 ${fmtH(hrs)} 小時</span>` : ""}</td></tr>`;
+    return `<tr><td class="sticky">${esc(e.name)}${S.hub === ALL || !eHubs(e).includes(S.hub) ? `${S.dense ? "<br>" : " "}<span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span>${hrs ? `<br><span class="small">在店 ${fmtH(hrs)} 小時</span>` : ""}</td></tr>`;
   }).join("");
 }
 function missRow(days, src) {
@@ -460,7 +464,6 @@ function gridHtml() {
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
     <button class="icon-btn" data-act="month" data-n="-1">‹</button><b style="font-size:16px">${y}年${+m}月</b><button class="icon-btn" data-act="month" data-n="1">›</button>
-    <span class="seg viewseg"><button class="${S.dense ? "on" : ""}" data-act="dense" data-v="1">精簡</button><button class="${S.dense ? "" : "on"}" data-act="dense" data-v="0">詳細</button></span>
     <span class="spacer"></span>${isAdmin() ? '<label class="btn" title="把排班 Excel（每間主要門市一段「XX店-早班／晚班」）匯入這個月">匯入班表 Excel<input type="file" data-ch="schedImp" accept=".xlsx,.xls" hidden></label>' : ""}${isAdmin() ? '<button class="btn" data-act="pubSched" title="把這個月的班表發布到員工查班表網頁">發布給員工</button><button class="btn" data-act="pubLink">複製查班網址</button>' : ""}<button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
 }
 
@@ -475,7 +478,7 @@ function autoHtml() {
     <div class="row">
       <label>從哪天開始<br><input type="date" data-ch="autoStart" value="${isoOf(S.autoStart)}"></label>
       <label>排幾天<br><select data-ch="autoDays">${[7, 14, 21, 28].map(n => `<option value="${n}" ${n === S.autoDays ? "selected" : ""}>${n} 天</option>`).join("")}</select></label>
-      <label class="small" style="align-self:flex-end"><input type="checkbox" id="autoKeep" ${S.autoKeep !== false ? "checked" : ""} data-ch="autoKeep"> 保留已經排好的格子（只補空的）</label>
+      <label>已經排的格子<br><select data-ch="autoMode">${[["keepOff", "保留休假，門市全部重排"], ["fill", "全部保留，只補空的"], ["all", "全部清掉重排（休假也清）"]].map(([k, v]) => `<option value="${k}" ${autoMode() === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <span class="spacer"></span>
       <button class="btn primary big" data-act="autoRun">產生班表</button>
     </div>
@@ -555,16 +558,25 @@ function buildRoutes(list, sh, people) {
   }
   return routes.sort((a, b) => b.load - a.load);
 }
+// 已排格子的處理：keepOff＝保留休假、門市重排；fill＝全部保留只補空；all＝全部清掉
+const autoMode = () => S.autoMode || ls.get("zq2-automode") || "keepOff";
+// 全部門市：一間一間排，共用同一份 plan（前一間排走的人，後面就不會重複排）
 function autoPlan() {
-  const r = rules(), start = S.autoStart, n = S.autoDays, keep = S.autoKeep !== false;
+  if (S.hub !== ALL) return autoPlanHub(S.hub, {});
+  const plan = {}, notes = [];
+  for (const h of hubs()) { const r = autoPlanHub(h.id, plan); r.notes.forEach(x => notes.push(`${h.name}：${x}`)); }
+  return { hub: ALL, start: S.autoStart, days: S.autoDays, cells: plan, notes };
+}
+function autoPlanHub(HUB, plan) {
+  const r = rules(), start = S.autoStart, n = S.autoDays, mode = autoMode(), keep = mode === "fill";
   const days = range(start, n).map(d => d.ds);
-  const hubStores = storesOf(S.hub);
-  const members = empsOf(S.hub).filter(e => e.active !== false && !e.trainee);
+  const hubStores = storesOf(HUB);
+  const members = empsOf(HUB).filter(e => e.active !== false && !e.trainee);
   // 別間主要門市、但在「可支援門市」勾了這裡門市的人，也可以來支援
   const helpers = emps().filter(e => e.active !== false && !e.trainee && !members.includes(e) && (e.stores || []).some(id => hubStores.some(s => s.id === id)));
   const people = [...members, ...helpers];
   const isHelper = new Set(helpers.map(e => e.id));
-  const plan = {}, notes = [];
+  const notes = [];
   const get = (ds, eid) => plan[ds + "_" + eid] !== undefined ? plan[ds + "_" + eid] : cell(ds, eid);
   const working = c => c && c.s && c.s !== "off";
   const daysInWeek = (eid, ds) => { const w = mondayOf(ds); let k = 0; for (let i = 0; i < 7; i++) { const d = addDays(w, i); if (d !== ds && working(get(d, eid))) k++; } return k; };
@@ -574,9 +586,15 @@ function autoPlan() {
   // 這格是不是排在「別間主要門市」的店（多間主要門市的人）→ 不能動、當天也不能再排
   const elsewhere = c => c && c.s && c.s !== "off" && allSt(c).some(id => !own.has(id));
   // 不保留：先把這段期間的格子清空（排在別間主要門市的班不動）
-  if (!keep) for (const ds of days) for (const e of people) if (!elsewhere(cell(ds, e.id)) && !cell(ds, e.id)?.tr) plan[ds + "_" + e.id] = null;
+  if (!keep) for (const ds of days) for (const e of people) {
+    if (plan[ds + "_" + e.id] !== undefined) continue;   // 全部門市模式：前面那間已經排過這格
+    const c = cell(ds, e.id);
+    // 單一主要門市重排時，排在別間主要門市的班（去支援）不動；全部門市一起排時全部重排
+    if ((S.hub !== ALL && elsewhere(c)) || c?.tr || (mode === "keepOff" && c?.s === "off")) continue;
+    plan[ds + "_" + e.id] = null;
+  }
   for (const ds of days) {
-    const used = new Set(people.filter(e => { const c = get(ds, e.id); return (keep && c) || elsewhere(c); }).map(e => e.id));
+    const used = new Set(people.filter(e => { const c = get(ds, e.id); return !!(c && c.s) || elsewhere(c); }).map(e => e.id));
     for (const sh of ["am", "pm"]) {
       const cov = coverage(ds, sh, get);
       const need = hubStores.filter(s => needs(s, sh) && !cov[s.id]);
@@ -596,7 +614,7 @@ function autoPlan() {
       const target = Math.max(1, Math.min(cand.length, Math.round(slots)));
       // 有設定路線就照路線（重的先排）；不在任何路線裡的店，照距離另外分組
       // 沒有設定路線時，照門市資料當場自動分組（不會存起來）
-      const rts0 = routesFor(ds, sh, S.hub), rts = rts0.length ? rts0 : genRoutes(S.hub, sh), toR = l => ({ ids: l.map(s => s.id), n: 1, h: l.reduce((a, s) => a + shHrs(s), 0) });
+      const rts0 = routesFor(ds, sh, HUB), rts = rts0.length ? rts0 : genRoutes(HUB, sh), toR = l => ({ ids: l.map(s => s.id), n: 1, h: l.reduce((a, s) => a + shHrs(s), 0) });
       let routes;
       if (rts.length) {
         // 路線可以帶到別間主要門市的店（例：文衡＋民樂）；別間主要門市路線已經包含的店，這裡不另外排
@@ -641,7 +659,7 @@ function autoPlan() {
   }
   if (!members.length) notes.push("這間主要門市沒有啟用中的人員");
   if (!hubStores.length) notes.push("這間主要門市沒有門市");
-  return { hub: S.hub, start, days: n, cells: plan, notes };
+  return { hub: HUB, start, days: n, cells: plan, notes };
 }
 async function autoSave() {
   const p = S.plan; if (!p) return;
@@ -672,17 +690,16 @@ function peopleHtml() {
     <td><input type="checkbox" data-ch="eAct" data-id="${e.id}" ${e.active !== false ? "checked" : ""}></td>
     <td><button class="btn small danger" data-act="eDel" data-id="${e.id}">刪</button></td></tr>`).join("");
   const act = emps().filter(e => e.active !== false);
-  return `<div class="card"><h3>人員・${esc(hubBy(S.hub)?.name)}（${empsOf(S.hub).filter(e => e.active !== false).length} 人）</h3>
+  // 檢查：沒工號的人、疑似同一人（小名 vs 全名）
+  const noCode = act.filter(e => !e.code);
+  const dup = act.filter(e => e.name.length <= 2).map(e => [e, act.find(x => x.id !== e.id && x.name.length > e.name.length && x.name.endsWith(e.name))]).filter(([, x]) => x);
+  const chk = (noCode.length || dup.length) ? `<div class="warnbox small" style="margin-bottom:10px;line-height:1.8">${dup.length ? `疑似同一人（小名和全名各一筆，請把小名那筆的班改到全名後刪掉）：${dup.map(([a, x]) => `${esc(a.name)} ↔ ${esc(x.name)}`).join("、")}<br>` : ""}${noCode.length ? `還沒有工號 ${noCode.length} 人（匯出 Apollo 匯入檔時會跳過）：${noCode.map(e => esc(e.name)).join("、")}` : ""}</div>` : "";
+  return `<div class="card"><h3>人員・${esc(hubBy(S.hub)?.name)}（${empsOf(S.hub).filter(e => e.active !== false).length} 人）</h3>${chk}
     <div class="row" style="margin-bottom:10px">
       <button class="btn primary" data-act="apolloHelp">從 Apollo「我的部屬」匯入…</button>
-      <button class="btn" data-act="empPaste">批次貼上名單…</button>
       <span class="spacer"></span>
       <button class="btn small danger" data-act="empClear">清空全部人員…</button>
       <label class="small"><input type="checkbox" data-ch="showAll" ${S.showAllEmps ? "checked" : ""}> 顯示全區域人員（${act.length} 人）</label>
-    </div>
-    <div class="row" style="margin-bottom:10px">
-      <input type="text" id="newEmp" placeholder="姓名" style="width:100px"><input type="text" id="newEmpCode" placeholder="工號" style="width:110px">
-      <button class="btn" data-act="addEmp">新增到「${esc(hubBy(S.hub)?.name)}」</button>
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>姓名</th><th>工號</th><th>主要門市</th><th>班別</th><th>每週最多天</th><th>可去門市</th><th>實習</th><th>啟用</th><th></th></tr>${rows || `<tr><td colspan="9" class="muted" style="padding:16px">還沒有人員</td></tr>`}</table></div>
     <p class="muted small">「主要門市」可以選不只一間，這個人會出現在每一間的排班裡。離職的人取消「啟用」就好，歷史班表會保留。「可去門市」不限＝主要門市底下每一家都可以排。<b>實習</b>打勾的人自動排班不會排，主管在「7. 班表」點他的格子選「實習」，指定跟誰（帶班人員）；班表上新人會看到「實習・跟 某某」，帶班人員會看到「帶 某某」。新人、帶班人員要看班表的話，把 Email 加到「設定 → 權限」的檢視者。</p></div>`;
@@ -690,7 +707,7 @@ function peopleHtml() {
 
 /* ---------- 可支援門市（人員 × 門市） ---------- */
 function supportHtml() {
-  const ph = S.supPeople ?? S.hub, sh = S.supStores ?? "";
+  const ph = S.supPeople ?? (S.hub === ALL ? "" : S.hub), sh = S.supStores ?? "";
   const people = emps().filter(e => e.active !== false && (ph === "" ? true : ph === "none" ? !eHubs(e).length : eHubs(e).includes(ph)));
   const shownHubs = hubs().filter(h => !sh || h.id === sh).map(h => [h, storesOf(h.id).filter(needs)]).filter(([, l]) => l.length);
   const cols = shownHubs.flatMap(([, l]) => l);
@@ -706,6 +723,7 @@ function supportHtml() {
       <label>人員主要門市 <select data-ch="supPeople"><option value="" ${ph === "" ? "selected" : ""}>全部</option>${hubs().map(h => `<option value="${h.id}" ${h.id === ph ? "selected" : ""}>${esc(h.name)}</option>`).join("")}<option value="none" ${ph === "none" ? "selected" : ""}>未設定</option></select></label>
       <label>顯示門市 <select data-ch="supStores">${hubOpt(sh, "全部主要門市")}</select></label>
       <button class="btn" data-act="supAllOwn">篩選中的人員全部恢復「本區」</button>
+      <button class="btn" data-act="supAllSel" title="篩選中的人員，把目前顯示的門市全部勾起來">全選</button>
       <span class="muted small">勾選＝這個人可以排到這家店。沒另外勾過的人＝自己主要門市底下全部（標「本區」）。勾到別間主要門市的店，自動排班時就能去支援。</span>
     </div></div>
     ${!people.length ? `<div class="card muted">沒有符合的人員</div>` : `<div class="scroll"><table class="sup">
@@ -734,17 +752,17 @@ function storesHtml() {
     <div class="row" style="margin-bottom:10px">
       <input type="text" id="newStore" placeholder="門市名稱" style="width:110px"><input type="text" id="newStoreAddr" placeholder="地址（選填）" style="width:220px">
       <button class="btn primary" data-act="addStore">新增門市</button>
-      <label class="btn primary" for="storeFile">匯入 Excel…</label>
-      <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden><input type="file" id="storeFile" data-ch="storeFile" accept=".xlsx,.xls,.csv" hidden>
-      <button class="btn" data-act="storeTpl" title="下載公版 Excel（門市資料＋不排一起，帶目前的資料）">下載公版 Excel</button>
-      <button class="btn" data-act="storePaste">批次貼上門市…</button>
+      <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden>
+      <label class="btn" for="infoFile" title="Excel／CSV：門市名稱＋地址，和（或）HD、純取件、重新分配">匯入門市地址／類型…</label><input type="file" id="infoFile" data-ch="infoFile" accept=".xlsx,.xls,.csv" hidden>
+      <button class="btn" data-act="nddImg" title="上傳 NDD 打包數截圖，自動辨識門市和數字">匯入 NDD 打包數（截圖）…</button>
       <span class="spacer"></span>
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>workload<br>（整天）</th><th>NDD<br>打包數</th><th>每班<br>在店時數</th>${FLAGS.map(([, v]) => `<th>${v}</th>`).join("")}<th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="15" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
-      <b>只要給 workload 和 NDD 打包數</b>：用公版匯入（或在表格直接改），系統會自動算出<b>每班在店時數</b>＝workload ÷ 350 ÷ 2，有 NDD 打包數就算有 NDD 寄件；匯入時勾「自動重新產生路線」就會一起排好路線，再到「6. 自動排班」產生班表。<br>
-      HD、純取件、重新分配設定一次就好（勾選會自動儲存）。<br>
-      <b>公版 Excel</b>：按「下載公版 Excel」下載目前的門市資料，改 workload、NDD打包數後按「匯入 Excel…」匯回來。<b>匯入營運指標週報</b>：直接選每週的門市週報檔，會讀最新一週的 workload（Avg 4W）。<br>
+      <b>每班在店時數</b>＝workload ÷ 350 ÷ 2（表格可以直接改，會自動儲存）；有 NDD 打包數就算有 NDD 寄件。<br>
+      <b>匯入營運指標週報</b>：直接選每週的門市週報檔，會讀最新一週的 workload（Avg 4W）。<br>
+      <b>匯入門市地址／類型</b>：Excel 或 CSV，第一列標題要有「門市」，再加「地址」和（或）「HD」「純取件」「重新分配」欄（填 V、Y、是、1 都算勾）；只更新有填的欄位。<br>
+      <b>匯入 NDD 打包數（截圖）</b>：上傳截圖，系統辨識門市名稱和數字，確認後才寫入；辨識錯的可以在預覽直接改。<br>
       系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
 }
 
@@ -925,7 +943,7 @@ function settingsHtml() {
 
 /* ================= 事件 ================= */
 const ACT = {
-  dense: el => { S.dense = el.dataset.v === "1"; ls.set("zq2-dense", S.dense ? "1" : "0"); render(); },
+  nddImg: () => openNddImport(),
   login: () => S.store.signIn().catch(e => toast("登入失敗：" + e.message)),
   switchUser: async () => { await S.store.signOut(); S.store.signIn(); },
   addRegion: async () => {
@@ -972,6 +990,7 @@ const ACT = {
     const name = ($("#newStore")?.value || "").trim(), addr = ($("#newStoreAddr")?.value || "").trim();
     if (!name) return toast("請輸入門市名稱");
     if (stores().some(s => s.name === name)) return toast("已經有同名的門市");
+    if (S.hub === ALL) return toast("請先在上方選一間主要門市，再新增門市");
     saveMaster({ stores: [...stores(), { id: uid("s"), name, addr, hub: S.hub }] });
   },
   sOn: (el, e) => { e.preventDefault(); patchStore(el.dataset.id, { off: false, needAm: true, needPm: true }); },
@@ -996,8 +1015,15 @@ const ACT = {
   },
   eStores: el => openEmpStores(el.dataset.id),
   supReset: el => patchEmp(el.dataset.id, { stores: [] }),
+  supAllSel: () => {
+    const ph = S.supPeople ?? (S.hub === ALL ? "" : S.hub), sh = S.supStores ?? "";
+    const cols = hubs().filter(h => !sh || h.id === sh).flatMap(h => storesOf(h.id).filter(needs)).map(x => x.id);
+    const ids = new Set(emps().filter(e => e.active !== false && (ph === "" ? true : ph === "none" ? !eHubs(e).length : eHubs(e).includes(ph))).map(e => e.id));
+    if (!confirm(`把篩選中的 ${ids.size} 人，畫面上的 ${cols.length} 家門市全部勾選？`)) return;
+    saveEmps(emps().map(e => ids.has(e.id) ? { ...e, stores: [...new Set([...allowed(e), ...cols])] } : e));
+  },
   supAllOwn: () => {
-    const ph = S.supPeople ?? S.hub;
+    const ph = S.supPeople ?? (S.hub === ALL ? "" : S.hub);
     const ids = new Set(emps().filter(e => ph === "" ? true : ph === "none" ? !eHubs(e).length : eHubs(e).includes(ph)).map(e => e.id));
     if (!confirm(`把篩選中的 ${ids.size} 人都恢復成「本區」（只去自己主要門市底下的門市）？`)) return;
     saveEmps(emps().map(e => ids.has(e.id) ? { ...e, stores: [] } : e));
@@ -1018,13 +1044,13 @@ const ACT = {
   rtGen: el => {
     const k = el.dataset.k;
     if (routesOf(k, S.hub).length && !confirm(`會依門市資料重新產生「${hubBy(S.hub)?.name}」的${RSET[k]}路線，取代目前的路線（產生後還可以手動調整），確定？`)) return;
-    applyGen([[k, S.hub]]).then(() => toast("已自動產生路線，可以再手動調整"));
+    applyGen(S.hub === ALL ? hubs().map(h => [k, h.id]) : [[k, S.hub]]).then(() => toast("已自動產生路線，可以再手動調整"));
   },
   rtGenAll: () => {
     if (!confirm("會依門市資料重新產生全部主要門市的早班、晚班路線，取代目前的路線，確定？")) return;
     applyGen(hubs().flatMap(h => [["wd_am", h.id], ["wd_pm", h.id]])).then(() => toast("已產生全部路線"));
   },
-  rtNew: el => { const k = el.dataset.k, pre = k.endsWith("pm") ? "N" : "R"; setRoutes(k, l => [...l, { id: uid("t"), code: pre + pad(l.length + 1), hub: S.hub, st: [], n: 1 }]); },
+  rtNew: el => { if (S.hub === ALL) return toast("請先在上方選一間主要門市"); const k = el.dataset.k, pre = k.endsWith("pm") ? "N" : "R"; setRoutes(k, l => [...l, { id: uid("t"), code: pre + pad(l.length + 1), hub: S.hub, st: [], n: 1 }]); },
   rtDel: el => { if (confirm("刪除這條路線？")) setRoutes(el.dataset.k, l => l.filter(r => r.id !== el.dataset.id)); },
   rtMv: el => editRoute(el.dataset.k, el.dataset.id, r => { const j = +el.dataset.j; [r.st[j - 1], r.st[j]] = [r.st[j], r.st[j - 1]]; }),
   rtSupRm: el => editRoute(el.dataset.k, el.dataset.id, r => { r.sup = (r.sup || []).filter(x => x !== el.dataset.s); }),
@@ -1043,7 +1069,7 @@ const CH = {
   showAll: t => { S.showAllEmps = t.checked; render(); },
   autoStart: t => { if (t.value) { S.autoStart = t.value.replace(/-/g, ""); S.plan = null; watchMonths(); render(); } },
   autoDays: t => { S.autoDays = +t.value; S.plan = null; watchMonths(); render(); },
-  autoKeep: t => { S.autoKeep = t.checked; S.plan = null; render(); },
+  autoMode: t => { S.autoMode = t.value; ls.set("zq2-automode", t.value); S.plan = null; render(); },
   hName: t => { const nm = t.value.trim(); if (!nm) return render(); saveMaster({ hubs: hubs().map(h => h.id === t.dataset.id ? { ...h, name: nm } : h) }); },
   rule: t => saveMaster({ rules: { ...rules(), [t.dataset.k]: t.value === "" ? 0 : +t.value } }),
   rName: t => { const nm = t.value.trim(); if (nm) S.store.set(`regions/${t.dataset.id}`, { name: nm }, true); },
@@ -1065,6 +1091,7 @@ const CH = {
   eTr: t => patchEmp(t.dataset.id, { trainee: t.checked }),
   lvYm: t => { if (t.value) { S.leaveYm = t.value; render(); } },
   storeFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreFile(f); },
+  infoFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreInfo(f); },
   supPeople: t => { S.supPeople = t.value; render(); },
   supStores: t => { S.supStores = t.value; render(); },
   sup: t => {
@@ -1657,7 +1684,7 @@ async function importSchedFile(file) {
     try {
       const idOf = new Map(known.map(p => [p.key, p.emp.id]));
       if (addNew && fresh.length) {
-        const add = fresh.map(p => ({ id: uid("e"), name: p.name, code: "", hubs: [p.hub || S.hub], shift: /早班/.test(p.wage) ? "am" : /晚班/.test(p.wage) ? "pm" : "any", active: true }));
+        const add = fresh.map(p => ({ id: uid("e"), name: p.name, code: "", hubs: [p.hub || realHub()], shift: /早班/.test(p.wage) ? "am" : /晚班/.test(p.wage) ? "pm" : "any", active: true }));
         fresh.forEach((p, i) => idOf.set(p.key, add[i].id));
         await S.store.set(P("cfg", "employees"), { list: [...emps(), ...add] });
       }
@@ -1672,18 +1699,120 @@ async function importSchedFile(file) {
     } catch (e) { b.disabled = false; toast("匯入失敗：" + e.message); }
   };
 }
+// ───────── 匯入門市地址／類型（Excel／CSV）─────────
+async function importStoreInfo(file) {
+  let rows;
+  try { const X = await loadXLSX(), wb = X.read(await file.arrayBuffer(), { type: "array" }); rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: "" }); }
+  catch (e) { return toast("讀取失敗：" + e.message); }
+  const hi = rows.findIndex(r => r.some(v => /門市|店名/.test(String(v))));
+  if (hi < 0) return toast("找不到標題列（要有「門市」欄）");
+  const H = rows[hi].map(v => String(v).replace(/\s/g, ""));
+  const col = re => H.findIndex(h => re.test(h));
+  const cName = H.findIndex(h => /^(門市|門市名稱|店名|智取店)$/.test(h)) >= 0 ? H.findIndex(h => /^(門市|門市名稱|店名|智取店)$/.test(h)) : col(/門市(?!.*(類型|地址))|店名/);
+  const cAddr = col(/地址/), cHd = col(/^HD/i), cPick = col(/純取件/), cRe = col(/重新分配/), cType = col(/類型/);
+  const yes = v => /^(v|y|yes|是|有|1|✓|✔|○|o|true)$/i.test(String(v).trim());
+  const norm = n => String(n || "").replace(/\s/g, "").replace(/^(智取店?[-－_]?)/, "").replace(/店$/, "");
+  const upd = new Map(), miss = [];
+  for (const r of rows.slice(hi + 1)) {
+    const nm = norm(r[cName]); if (!nm) continue;
+    const st = stores().find(x => x.name === nm) || stores().find(x => norm(x.name) === nm);
+    if (!st) { miss.push(nm); continue; }
+    const p = {};
+    if (cAddr >= 0 && String(r[cAddr]).trim()) p.addr = String(r[cAddr]).trim();
+    const t = cType >= 0 ? String(r[cType]) : "";
+    const flag = (k, c, re) => { if (c >= 0 && String(r[c]).trim() !== "") p[k] = yes(r[c]); else if (cType >= 0) p[k] = re.test(t); };
+    flag("hd", cHd, /HD/i); flag("pick", cPick, /純取件/); flag("rearr", cRe, /重新分配/);
+    if (Object.keys(p).length) upd.set(st.id, p);
+  }
+  if (!upd.size) return toast("沒有可以更新的門市" + (miss.length ? `（對不到：${miss.slice(0, 8).join("、")}）` : ""));
+  const lines = [...upd].map(([id, p]) => { const st = storeBy(id); return `<tr><td>${esc(st.name)}</td><td class="small">${p.addr ? esc(p.addr) : "—"}</td>${["hd", "pick", "rearr"].map(k => `<td class="ctr">${k in p ? (p[k] ? "✓" : "✗") : "—"}</td>`).join("")}</tr>`; }).join("");
+  const m = openModal(`<h2>匯入門市地址／類型</h2><div class="sub">會更新 <b>${upd.size}</b> 家門市（只改檔案裡有填的欄位）${miss.length ? `；<span style="color:#b91c1c">對不到 ${miss.length} 家：${miss.map(esc).join("、")}</span>` : ""}</div>
+    <div class="scrollx" style="max-height:50vh;overflow:auto"><table class="list"><tr><th>門市</th><th>地址</th><th>HD</th><th>純取件</th><th>重新分配</th></tr>${lines}</table></div>
+    <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">更新</button></div>`);
+  m.onclick = async ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    if (b.dataset.x === "cancel") return closeModal();
+    if (b.dataset.x !== "go") return;
+    b.disabled = true;
+    await saveMaster({ stores: stores().map(x => upd.has(x.id) ? { ...x, ...upd.get(x.id), ...(upd.get(x.id).addr && upd.get(x.id).addr !== x.addr ? { lat: null, lng: null } : {}) } : x) });
+    closeModal(); toast(`已更新 ${upd.size} 家門市`);
+  };
+}
+
+// ───────── 匯入 NDD 打包數（截圖辨識，或貼上文字）─────────
+// 在瀏覽器用 Tesseract.js 辨識繁中＋數字；找每一行裡的門市名稱，取名稱後面第一個數字。辨識結果一律先進預覽，可以手動改。
+function parseNddText(text, list) {
+  const out = {}, byLen = [...list].sort((a, b) => b.name.length - a.name.length);
+  const t = String(text).replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 65248)).replace(/[ \t]+/g, " ");
+  for (const line of t.split(/\n/)) {
+    const L = line.replace(/\s/g, "");
+    let used = "";
+    for (const s of byLen) {
+      const i = L.indexOf(s.name); if (i < 0 || used.includes(s.name)) continue;
+      used += s.name;
+      const m = L.slice(i + s.name.length).match(/\d[\d,]*/);
+      if (m) out[s.id] = +m[0].replace(/,/g, "");
+    }
+  }
+  return out;
+}
+let tessP = null;
+const loadTess = () => tessP ||= new Promise((ok, ng) => { if (window.Tesseract) return ok(window.Tesseract); const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"; sc.onload = () => ok(window.Tesseract); sc.onerror = () => { tessP = null; ng(new Error("辨識元件載入失敗，請檢查網路")); }; document.head.appendChild(sc); });
+function openNddImport() {
+  const list = storesOf(S.hub).filter(needs);
+  const val = {};
+  const m = openModal(`<h2>匯入 NDD 打包數・${esc(hubBy(S.hub)?.name || "")}</h2>
+    <div class="sub">上傳截圖（可以一次選多張），系統會辨識門市名稱和後面的數字；也可以把文字貼在下面。<b>確認數字沒錯再按「寫入」</b>，辨識錯的直接改。</div>
+    <div class="row" style="margin:8px 0"><label class="btn primary">選截圖…<input type="file" id="nddPic" accept="image/*" multiple hidden></label><span id="nddMsg" class="small muted"></span></div>
+    <textarea id="nddTxt" rows="3" placeholder="或貼上文字（例如：福壽 120）" style="width:100%"></textarea>
+    <div class="row" style="margin:6px 0"><button class="btn small" data-x="parse">讀取貼上的文字</button><span class="spacer"></span><label class="small"><input type="checkbox" id="nddZero"> 沒辨識到的門市設為 0</label></div>
+    <div style="max-height:46vh;overflow:auto"><table class="list"><tr><th>門市</th><th>目前</th><th>新的 NDD 打包數</th></tr>
+      ${list.map(st => `<tr><td>${esc(st.name)}</td><td class="muted">${st.nddCnt ?? "—"}</td><td><input type="number" min="0" data-ndd="${st.id}" style="width:90px" placeholder="不變"></td></tr>`).join("")}</table></div>
+    <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">寫入</button></div>`);
+  const fill = found => { let k = 0; for (const [id, v] of Object.entries(found)) { const i = m.querySelector(`[data-ndd="${id}"]`); if (i) { i.value = v; i.style.background = "#fef9c3"; k++; } } return k; };
+  m.querySelector("#nddPic").onchange = async ev => {
+    const files = [...ev.target.files]; ev.target.value = ""; if (!files.length) return;
+    const msg = m.querySelector("#nddMsg");
+    try {
+      msg.textContent = "載入辨識元件…（第一次比較久）";
+      const T = await loadTess(); let txt = "";
+      for (const [i, f] of files.entries()) {
+        msg.textContent = `辨識第 ${i + 1}/${files.length} 張…`;
+        const r = await T.recognize(f, "chi_tra+eng");
+        txt += "\n" + r.data.text;
+      }
+      m.querySelector("#nddTxt").value = txt.trim();
+      const k = fill(parseNddText(txt, list));
+      msg.textContent = `辨識到 ${k} 家（黃底），請核對`;
+    } catch (e) { msg.textContent = "辨識失敗：" + e.message; }
+  };
+  m.onclick = async ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    if (b.dataset.x === "cancel") return closeModal();
+    if (b.dataset.x === "parse") { const k = fill(parseNddText(m.querySelector("#nddTxt").value, list)); return toast(`讀到 ${k} 家`); }
+    if (b.dataset.x !== "go") return;
+    const zero = m.querySelector("#nddZero").checked, ch = {};
+    m.querySelectorAll("[data-ndd]").forEach(i => { if (i.value !== "") ch[i.dataset.ndd] = +i.value; else if (zero) ch[i.dataset.ndd] = 0; });
+    const n = Object.keys(ch).length; if (!n) return toast("沒有要更新的數字");
+    b.disabled = true;
+    await saveMaster({ stores: stores().map(x => x.id in ch ? { ...x, nddCnt: ch[x.id] } : x) });
+    closeModal(); toast(`已更新 ${n} 家的 NDD 打包數`);
+  };
+}
 // ───────── 發布班表給員工（員工用 schedule.html?r=區域代碼 免登入查班） ─────────
 // 寫到 regions/{區域}/pub/{yyyy-mm}（firestore.rules 要允許任何人讀、主管寫）。
 // 只放姓名、班別、門市名稱；各人的天數用陣列（第 i 格＝當月第 i+1 天），每人整段覆蓋、不同主要門市分開發布也不會互相蓋掉。
 function schedLink() { return location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "") + "schedule.html?r=" + S.rid; }
-function pubEntry(e, ds) {
+function pubEntry(e, ds, cov) {
   const c = cell(ds, e.id);
   if (!c || !c.s) return null;
   if (c.s === "off") return { s: "off" };
   const one = c => {
-    // 實習：門市照帶班人員當天同一班
+    // 實習：門市照帶班人員當天同一班；h＝各店應在店時數（和 st 一一對應）
     const m = (c.tr && onSh(cell(ds, c.tr), c.s)) || c;
-    const sp = m.sp || [], out = { s: c.s, st: (m.st || []).filter(id => !sp.includes(id)).map(sName), sp: (m.st || []).filter(id => sp.includes(id)).map(sName) };
+    const sp = m.sp || [], own = (m.st || []).filter(id => !sp.includes(id));
+    const hs = cov ? cellHrs(m, ds, cov, cell) : [], hOf = id => +(hs[(m.st || []).indexOf(id)] || 0).toFixed(2);
+    const out = { s: c.s, st: own.map(sName), h: own.map(hOf), sp: (m.st || []).filter(id => sp.includes(id)).map(sName) };
     if (c.tr) out.tr = empBy(c.tr)?.name || "";
     return out;
   };
@@ -1695,9 +1824,10 @@ async function publishSchedule() {
   if (!isAdmin()) return toast("只有主管可以發布班表");
   if (!S.months[S.ym]) return toast("班表還在載入，請稍等");
   const days = monthDays(S.ym), emps = {};
+  const memo = {}, cov = (ds, sh) => memo[ds + sh] ||= coverage(ds, sh, cell);
   let n = 0;
   for (const e of rowsFor(days, cell)) {
-    const d = days.map(x => pubEntry(e, x.ds)), any = d.some(Boolean);
+    const d = days.map(x => pubEntry(e, x.ds, cov)), any = d.some(Boolean);
     if (e.active === false && !any) continue;
     if (any) n++;
     emps[e.id] = { n: e.name, g: hubBy(eHubs(e)[0])?.name || "", d };

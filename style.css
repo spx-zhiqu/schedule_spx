@@ -413,3 +413,27 @@ td.rwarn{color:#b45309;font-size:12px;min-width:120px}
 .sg.dense .dsep{border-top:1px dashed #a78bfa;margin:4px 0 3px}
 .sg.dense td.tot{font-size:12px;min-width:58px;line-height:1.35}
 .sg.dense tr.grp td{height:28px;font-size:13px}
+/* 精簡班表：雙班第二段、備註 */
+.sg.dense .d2t{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:#7c3aed;border-radius:6px;padding:0 5px;margin-bottom:1px}
+.sg.dense .d2-am .d2t{background:#0284c7}
+.sg.dense .d2-pm .dn small{color:#6d28d9}
+.sg.dense .d2-am .dn small{color:#0369a1}
+.sg.dense div.nt{font-size:10.5px;color:#b45309;font-weight:500;margin-top:2px;cursor:help}
+.sg.dense td.c .dn{margin-top:0}
+/* 員工查班：一天一列 */
+.ag{padding:6px 10px}
+.ag-row{display:flex;gap:10px;padding:9px 4px;border-bottom:1px solid #f1f5f9;align-items:flex-start}
+.ag-row.past{opacity:.55}
+.ag-row.today{background:#fff7ed;border-radius:10px;box-shadow:inset 3px 0 0 #ee4d2d;opacity:1}
+.ag-d{width:54px;flex:none;line-height:1.2}
+.ag-d b{display:block;font-size:15px}
+.ag-d span{font-size:12px;color:#64748b}
+.ag-row.we .ag-d span{color:#b45309}
+.ag-b{flex:1;min-width:0}
+.ag-sh+.ag-sh{margin-top:8px;padding-top:8px;border-top:1px dashed #e2e8f0}
+.ag-tag{display:inline-block;font-size:13px;font-weight:700;padding:1px 8px;border-radius:8px}
+.ag-tag.c-am{background:#e0f2fe;color:#0369a1}
+.ag-tag.c-pm{background:#ede9fe;color:#6d28d9}
+.ag-off{color:#9aa3af;font-weight:600}
+.ag .sch-stores{margin-top:5px}
+.sch-st small{margin-left:5px;font-size:12px;color:#0369a1;font-weight:700}

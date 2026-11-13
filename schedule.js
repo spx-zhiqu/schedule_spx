@@ -61,47 +61,34 @@ function render() {
     return;
   }
   const mine = emps[L.me.id], days = new Date(y, m, 0).getDate(), today = dsOf(new Date());
-  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;
-  let cells = "";
-  for (let i = 0; i < lead; i++) cells += `<div class="cal-e"></div>`;
+  // 一天一列：日期｜班別｜門市＋應在店時數（不用再點進去看）
+  let rows = "";
   for (let d = 1; d <= days; d++) {
     const ds = `${y}${pad(m)}${pad(d)}`, e = mine.d?.[d - 1], wd = new Date(y, m - 1, d).getDay();
-    cells += `<button class="cal-d ${cls(e)} ${wd === 0 || wd === 6 ? "we" : ""} ${ds === today ? "today" : ""}" data-d="${d}"><span class="dn">${d}</span>${e ? `<span class="dt">${shortOf(e)}</span>` : ""}</button>`;
+    const parts = !e ? [] : e.s === "off" ? [] : e.x ? [e, e.x] : [e];
+    rows += `<div class="ag-row ${ds === today ? "today" : ""} ${ds < today ? "past" : ""} ${wd === 0 || wd === 6 ? "we" : ""}" ${ds === today ? 'id="agToday"' : ""}>
+      <div class="ag-d"><b>${m}/${d}</b><span>${WD[wd]}${ds === today ? "・今天" : ""}</span></div>
+      <div class="ag-b">${!e ? `<span class="muted small">沒有排班</span>` : e.s === "off" ? `<span class="ag-off">休</span>` : parts.map(p => `<div class="ag-sh"><span class="ag-tag c-${p.s}">${ICON[p.s]} ${LABEL[p.s]}${hsum(p) ? ` ${hsum(p)}h` : ""}</span>${storeChips(p)}</div>`).join("")}</div></div>`;
   }
   const has = (mine.d || []).some(Boolean);
-  const upcoming = [];
-  if (L.ym === ymOf(new Date())) {
-    const t = new Date();
-    for (let k = 0; k < 2; k++) { const dd = new Date(t.getFullYear(), t.getMonth(), t.getDate() + k); if (ymOf(dd) === L.ym) upcoming.push([dd, mine.d?.[dd.getDate() - 1], k === 0 ? "今天" : "明天"]); }
-  }
   const pub = L.doc.publishedAt ? new Date(L.doc.publishedAt) : null;
   main.innerHTML = nav + `<div class="row" style="margin-top:6px"><b style="font-size:16px">${esc(L.me.name)}</b><a href="#" id="notMe" class="small">不是我，重新選擇</a></div></div>
-    ${upcoming.length ? `<div class="card">${upcoming.map(([dd, e, lb]) => `<div class="sch-today"><div class="sch-badge ${cls(e)}">${lb}</div><div><b>${dd.getMonth() + 1}/${dd.getDate()}（${WD[dd.getDay()]}）${e ? labelOf(e) : "沒有排班"}</b>${e ? storeChips(e) : ""}</div></div>`).join("")}</div>` : ""}
-    <div class="card">${has ? "" : `<p class="muted" style="text-align:center;margin:0 0 10px">這個月還沒有你的班表。</p>`}
-      <div class="cal">${["一", "二", "三", "四", "五", "六", "日"].map(w => `<div class="cal-h">${w}</div>`).join("")}${cells}</div>
-      <div class="legend" style="margin-top:10px"><span><i class="c-am"></i>早班</span><span><i class="c-pm"></i>晚班</span><span><i class="c-off"></i>休假</span><span>點日期看要去哪些門市</span></div>
+    <div class="card ag">${has ? "" : `<p class="muted" style="text-align:center;margin:0 0 10px">這個月還沒有你的班表。</p>`}${rows}
+      <p class="muted small" style="margin-top:10px">店名旁的數字＝這家店應在店時數（小時）。</p>
       ${pub ? `<p class="sch-dl">班表更新於 ${pub.getMonth() + 1}/${pub.getDate()} ${pad(pub.getHours())}:${pad(pub.getMinutes())}</p>` : ""}</div>`;
+  if (!L.scrolled) { L.scrolled = true; setTimeout(() => $("#agToday")?.scrollIntoView({ block: "center" }), 50); }
 }
+const fmtH = h => (Math.round(h * 100) / 100).toFixed(2);
+const hsum = p => { const t = (p.h || []).reduce((a, b) => a + (+b || 0), 0); return t ? (Math.round(t * 10) / 10).toFixed(1) : ""; };
 function storeChips(e) {
   if (e.s === "off") return "";
-  if (e.x) { const { x, ...a } = e; return `<div class="small" style="margin-top:4px">${ICON[a.s]} ${LABEL[a.s]}</div>` + storeChips(a) + `<div class="small" style="margin-top:6px">${ICON[x.s]} ${LABEL[x.s]}</div>` + storeChips(x); }
   const tr = e.tr ? `<div class="muted small" style="margin-top:2px">🎓 實習・跟 ${esc(e.tr)}</div>` : "";
-  const st = (e.st || []).map(n => `<span class="sch-st">${esc(n)}</span>`).join("") + (e.sp || []).map(n => `<span class="sch-st sp">支援 ${esc(n)}</span>`).join("");
+  const st = (e.st || []).map((n, i) => `<span class="sch-st">${esc(n)}${e.h && +e.h[i] ? `<small>${fmtH(+e.h[i])}</small>` : ""}</span>`).join("") + (e.sp || []).map(n => `<span class="sch-st sp">支援 ${esc(n)}</span>`).join("");
   return tr + (st ? `<div class="sch-stores">${st}</div>` : `<div class="muted small" style="margin-top:2px">門市請跟主管確認</div>`);
 }
 function onClick(e) {
   const t = e.target.closest("button,a"); if (!t) return;
   if (t.id === "notMe") { e.preventDefault(); return notMe(); }
-  if (t.dataset.nav) { L.ym = shiftYm(L.ym, +t.dataset.nav); return watch(); }
+  if (t.dataset.nav) { L.ym = shiftYm(L.ym, +t.dataset.nav); L.scrolled = false; return watch(); }
   if (t.dataset.me) return pickMe(t.dataset.me);
-  if (t.dataset.d) return openDay(+t.dataset.d);
-}
-function openDay(d) {
-  const [y, m] = L.ym.split("-").map(Number), e = L.doc?.emps?.[L.me?.id]?.d?.[d - 1];
-  const root = $("#modalRoot"), wd = WD[new Date(y, m - 1, d).getDay()];
-  root.innerHTML = `<div class="modal-bg"><div class="modal sheet"><h2>${m}/${d}（${wd}）</h2>
-    <div class="sch-today" style="border:0"><div class="sch-badge ${cls(e)}">${e ? shortOf(e) : "—"}</div><div><b>${e ? labelOf(e) : "沒有排班"}</b>${e ? storeChips(e) : ""}</div></div>
-    <div class="actions"><span class="spacer"></span><button class="btn" id="mClose">關閉</button></div></div></div>`;
-  const bg = root.querySelector(".modal-bg");
-  bg.onclick = ev => { if (ev.target === bg || ev.target.id === "mClose") root.innerHTML = ""; };
 }
