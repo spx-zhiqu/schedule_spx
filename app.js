@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v55";
+const APP_VER = "v56";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -156,6 +156,7 @@ async function init() {
   S.autoStart = mondayOf(addDays(todayDs(), 7)); S.autoDays = 14;
   S.tab = ls.get("zq2-tab") || "home";
   S.rset = ls.get("zq2-rset") || "wd_am";
+  S.dense = ls.get("zq2-dense") !== "0";   // 班表預設精簡顯示
   try { S.store = await createStore(); }
   catch (e) { main.innerHTML = `<div class="card">無法連線到 Firebase：${esc(e.message)}</div>`; return; }
   if (S.store.mode === "local") { const b = $("#banner"); b.hidden = false; b.innerHTML = "目前是<b>本機試用模式</b>：資料只存在這台電腦的瀏覽器。"; }
@@ -357,7 +358,28 @@ function overviewHtml() {
 
 /* ---------- 班表（人 × 日期） ---------- */
 const SHICON = { am: "☀️ 早班", pm: "🌙 晚班" };
+// 精簡顯示：一行「早3間・路線代碼・時數」，下面店名小字；雙班上下兩段
+const routeCode = p => { const ids = (p.st || []).filter(id => !(p.sp || []).includes(id)); return ids.length ? allRoutes("wd_" + p.s).find(r => r.st.length === ids.length && r.st.every(id => ids.includes(id)))?.code || "" : ""; };
+const fmt1 = h => (Math.round(h * 10) / 10).toFixed(1);
+function cellDense(c, av, hs, ds, src, eid, hs2) {
+  if (!c) return avTag(av);
+  if (c.s === "off") return avTag(av) + `<span class="offt">休</span>`;
+  const part = (p, h) => {
+    if (p.tr) {
+      const tc = src && ds ? onSh(src(ds, p.tr), p.s) : null, ids = tc ? tc.st || [] : p.st || [];
+      return `<div class="dl"><b class="pill p-${p.s}">${SH1[p.s]}</b><span class="dh trn">🎓跟${esc(empBy(p.tr)?.name || "")}</span></div><div class="dn">${ids.map(id => esc(sName(id))).join(" ")}</div>`;
+    }
+    const ids = p.st || [], sp = p.sp || [], tot = (h || []).reduce((a, x) => a + x, 0), code = routeCode(p);
+    const kids = ds && src ? emps().filter(x => x.id !== eid && onSh(src(ds, x.id), p.s)?.tr === eid) : [];
+    return `<div class="dl"><b class="pill p-${p.s}">${SH1[p.s]} ${ids.length - sp.length}間</b>${code ? `<span class="rc">${esc(code)}</span>` : ""}${tot ? `<span class="dh">${fmt1(tot)}h</span>` : ""}${p.n ? `<span class="nt" title="${esc(p.n)}">✎</span>` : ""}</div>`
+      + `<div class="dn">${ids.map(id => sp.includes(id) ? `<span class="spn">+${esc(sName(id))}</span>` : esc(sName(id))).join(" ")}</div>`
+      + (kids.length ? `<div class="dh trn">🎓帶${kids.map(k => esc(k.name)).join("、")}</div>` : "");
+  };
+  const x = xOf(c);
+  return avTag(av) + part(c, hs) + (x ? `<div class="dsep"></div>` + part(x, hs2) : "");
+}
 function cellInner(c, av, hs, ds, src, eid, hs2) {
+  if (S.dense) return cellDense(c, av, hs, ds, src, eid, hs2);
   if (!c) return avTag(av);
   const x = xOf(c);
   if (x) { const { x: _, ...a } = c; return cellInner(a, av, hs, ds, src, eid) + `<div class="dbl">${cellInner(x, null, hs2, ds, src, eid)}</div>`; }
@@ -406,7 +428,7 @@ function personRows1(list, days, src, changed) {
     if (wkOver) warn.push(`${wkOver} 週超過每週 ${weekCap(e)} 天`);
     if (maxRun > consecCap()) warn.push(`連續上班 ${maxRun} 天（上限 ${consecCap()}）`);
     if (tightN) warn.push(`${tightN} 次晚班隔天接早班`);
-    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? ` <span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span>${hrs ? `<br><span class="small">在店 ${fmtH(hrs)} 小時</span>` : ""}</td></tr>`;
+    return `<tr><td class="sticky">${esc(e.name)}${!eHubs(e).includes(S.hub) ? `${S.dense ? "<br>" : " "}<span class="muted small">(${esc(hubNames(e) || "未設定主要門市")})</span>` : ""}${e.active === false ? ' <span class="muted small">(停用)</span>' : ""}</td>${tds}<td class="tot ${warn.length ? "over" : ""}" ${warn.length ? `title="${esc(e.name + "：" + warn.join("；"))}"` : ""}>${work}天${warn.length ? " ⚠" : ""}<br><span class="small">${cnt}店次</span>${hrs ? `<br><span class="small">在店 ${fmtH(hrs)} 小時</span>` : ""}</td></tr>`;
   }).join("");
 }
 function missRow(days, src) {
@@ -428,7 +450,7 @@ function gridHtml() {
   if (!S.months[S.ym]) return monthNav(y, m) + `<div class="loading">載入班表中…</div>`;
   const list = rowsFor(days, cell);
   return monthNav(y, m) + `
-  <div class="scroll"><table class="sg">
+  <div class="scroll"><table class="sg ${S.dense ? "dense" : ""}">
     <thead><tr><th class="sticky">${esc(hubBy(S.hub)?.name)}（${list.length}人）</th>${days.map(d => `<th class="${d.today ? "today" : ""} ${d.we ? "we" : ""}">${d.d}<br>${d.wd}</th>`).join("")}<th>合計</th></tr>
     ${missRow(days, cell)}</thead>
     <tbody>${personRows(list, days, cell) || `<tr><td class="sticky" style="padding:20px" colspan="${days.length + 2}">這間主要門市還沒有人員，請到「人員」新增或從 Apollo 匯入。</td></tr>`}</tbody>
@@ -438,6 +460,7 @@ function gridHtml() {
 function monthNav(y, m) {
   return `<div class="row toolbar" style="margin-bottom:10px">
     <button class="icon-btn" data-act="month" data-n="-1">‹</button><b style="font-size:16px">${y}年${+m}月</b><button class="icon-btn" data-act="month" data-n="1">›</button>
+    <span class="seg viewseg"><button class="${S.dense ? "on" : ""}" data-act="dense" data-v="1">精簡</button><button class="${S.dense ? "" : "on"}" data-act="dense" data-v="0">詳細</button></span>
     <span class="spacer"></span>${isAdmin() ? '<label class="btn" title="把排班 Excel（每間主要門市一段「XX店-早班／晚班」）匯入這個月">匯入班表 Excel<input type="file" data-ch="schedImp" accept=".xlsx,.xls" hidden></label>' : ""}${isAdmin() ? '<button class="btn" data-act="pubSched" title="把這個月的班表發布到員工查班表網頁">發布給員工</button><button class="btn" data-act="pubLink">複製查班網址</button>' : ""}<button class="btn" data-act="exportX">匯出 Excel</button><button class="btn" data-act="exportApollo" title="產生 Apollo 班表匯入檔（每人每天一列，時數＝當天路線所需時數）">匯出 Apollo 匯入檔</button><button class="btn" onclick="window.print()">列印</button></div>`;
 }
 
@@ -479,7 +502,7 @@ function autoHtml() {
       <span class="spacer"></span><button class="btn" data-act="autoCancel">取消</button><button class="btn" data-act="autoRun">重新產生</button><button class="btn primary big" data-act="autoSave" ${nChg ? "" : "disabled"}>確認寫入</button>
     </div>
     <p class="muted small">左上角有<b style="color:#2563eb">藍點</b>的是這次會改的格子。確認寫入後還是可以到「班表」點格子手動調整。</p>
-    <div class="scroll"><table class="sg">
+    <div class="scroll"><table class="sg ${S.dense ? "dense" : ""}">
       <thead><tr><th class="sticky">${esc(hub?.name)}</th>${days.map(d => `<th class="${d.today ? "today" : ""} ${d.we ? "we" : ""}">${d.m}/${d.d}<br>${d.wd}</th>`).join("")}<th>合計</th></tr>${missRow(days, src)}</thead>
       <tbody>${personRows(list, days, src, changed)}</tbody></table></div></div>`;
 }
@@ -902,6 +925,7 @@ function settingsHtml() {
 
 /* ================= 事件 ================= */
 const ACT = {
+  dense: el => { S.dense = el.dataset.v === "1"; ls.set("zq2-dense", S.dense ? "1" : "0"); render(); },
   login: () => S.store.signIn().catch(e => toast("登入失敗：" + e.message)),
   switchUser: async () => { await S.store.signOut(); S.store.signIn(); },
   addRegion: async () => {

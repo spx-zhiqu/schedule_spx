@@ -388,3 +388,25 @@ td.rwarn{color:#b45309;font-size:12px;min-width:120px}
 .sg td.c .dbl .shl{color:#6d28d9}
 .dblbox{margin-top:12px;padding:10px;border:1px dashed #c4b5fd;border-radius:10px;background:#faf5ff}
 .c-dbl{background:linear-gradient(135deg,#dbeafe 0 50%,#ede4fb 50% 100%)!important;color:#4c1d95}
+
+/* 班表精簡顯示 */
+.viewseg{display:inline-flex;margin-left:10px}
+.sg.dense thead th{min-width:82px;height:36px;font-size:13px}
+.sg.dense thead tr.missrow th{top:36px;height:24px;font-size:12px}
+.sg.dense .sticky{font-size:13px;min-width:78px;padding:4px 8px;line-height:1.3}
+.sg.dense .sticky .small{font-size:10.5px;font-weight:400}
+.sg.dense td.c{min-width:82px;max-width:92px;padding:4px 3px 5px 6px;line-height:1.3;vertical-align:top}
+.sg.dense td.c.s-am{box-shadow:inset 3px 0 0 #0284c7}
+.sg.dense td.c.s-pm{box-shadow:inset 3px 0 0 #7c3aed}
+.sg.dense td.c.s-off .offt{padding-top:2px;font-size:13px}
+.sg.dense td.c .dl{display:flex;align-items:center;justify-content:center;gap:3px;flex-wrap:wrap}
+.sg.dense .pill{font-size:11px;font-weight:700;padding:0 5px;border-radius:9px;color:#fff;white-space:nowrap}
+.sg.dense .p-am{background:#0284c7}.sg.dense .p-pm{background:#7c3aed}
+.sg.dense .dh{font-size:10.5px;color:#475569;font-weight:600}
+.sg.dense .rc{font-size:10px;color:#475569;background:#fff;border:1px solid #cbd5e1;border-radius:4px;padding:0 3px}
+.sg.dense .nt{font-size:11px;color:#b45309;cursor:help}
+.sg.dense .dn{font-size:12.5px;font-weight:600;color:#0f172a;margin-top:2px;word-break:keep-all}
+.sg.dense .dn .spn{color:#c2410c}
+.sg.dense .dsep{border-top:1px dashed #a78bfa;margin:4px 0 3px}
+.sg.dense td.tot{font-size:12px;min-width:58px;line-height:1.35}
+.sg.dense tr.grp td{height:28px;font-size:13px}
