@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v65";
+const APP_VER = "v66";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -104,6 +104,9 @@ const bans = () => M().ban || [];
 const PAIR_DEFAULT = [["榮華", "昌平", "pm", 2]];
 const pairs = () => M().pair ?? PAIR_DEFAULT.map(([a, b, sh, n]) => { const A = stores().find(x => x.name === a), B = stores().find(x => x.name === b); return A && B ? { a: A.id, b: B.id, sh, n } : null; }).filter(Boolean);
 const PAIR_SH = { am: "早班", pm: "晚班", both: "早晚班" };
+// 晚班 HD 店原則一間一個人；比較不忙的 HD 店（預設中隆、福前）可以再加一間工作量最低的店
+const HDPLUS_DEFAULT = ["中隆", "福前"];
+const hdPlus = () => M().hdPlus ?? stores().filter(x => HDPLUS_DEFAULT.includes(x.name)).map(x => x.id);
 // 只限某一班不排一起（ban 是早晚都不排）；預設中原＋昌明晚班太重
 const BAN2_DEFAULT = [["中原", "昌明", "pm"]];
 const bans2 = (list = stores()) => M().ban2 ?? BAN2_DEFAULT.map(([a, b, sh]) => { const A = list.find(x => x.name === a), B = list.find(x => x.name === b); return A && B ? { a: A.id, b: B.id, sh } : null; }).filter(Boolean);
@@ -116,7 +119,7 @@ function routeWarn(rt, sh) {
   if (sh === "pm" && ndd.length > Math.max(1, +rt.n || 1)) w.push(`${ndd.length} 間有 NDD 寄件`);
   if (sh === "pm" && ndd.length && !isNdd(l[0]) && !l[0].hd) w.push("NDD 店要排第一間");
   if (hd.length > 1) w.push(`${hd.length} 間 HD 店`);
-  if (sh === "pm" && hd.length && l.length > 1) w.push("晚班 HD 店只排一間");
+  if (sh === "pm" && hd.length && l.length > (hdPlus().includes(l[0].id) ? 2 : 1)) w.push(hdPlus().includes(l[0].id) ? "這間 HD 店晚班最多再加一間" : "晚班 HD 店只排一間");
   if (hd.length && !l[0].hd && !(sh === "pm" && isNdd(l[0]))) w.push("HD 店要排第一間");
   if (sh === "pm" && hd.length && isNdd(l[0]) && !l[0].hd) w.push("HD 店排在第二間");
   for (const [a, b] of bansFor(sh)) if (rt.st.includes(a) && rt.st.includes(b)) w.push(`${sName(a)}＋${sName(b)} 不排一起`);
@@ -807,6 +810,7 @@ function routesHtml() {
   const inHub = id => S.hub === ALL || storeBy(id)?.hub === S.hub;
   const banList = [...bans().map(([a, b]) => ({ a, b, sh: "both" })), ...bans2()].filter(x => inHub(x.a) || inHub(x.b));
   const pairList = pairs().filter(p => inHub(p.a) || inHub(p.b));
+  const hdSt = storesOf(S.hub).filter(x => x.hd && needs(x));
   const sopt = hubSt.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
   return `<div class="ovbar">${Object.entries(RSET).map(([kk, v]) => `<button class="ovtab ${k === kk ? "on" : ""}" data-act="rset" data-k="${kk}">${v}</button>`).join("")}</div>
   <div class="card"><h3>${RSET[k]}路線・${esc(hub?.name)}</h3>
@@ -826,6 +830,14 @@ function routesHtml() {
     <p class="muted small" style="line-height:1.8"><b>自動產生路線</b>：照「3. 門市」的 workload（換算在店時數）、NDD 打包數、HD，把同一間主要門市底下的店分組——晚班每人最多 2 間、早班最多 3 間；HD 店、晚班有 NDD 寄件的店排第一間，每條最多 1 間；每人最多跑幾間照上面的設定（早班 2 或 3 間、晚班 2 間），路線數用最少的，再依 workload 平均分配，讓每條路線的在店時數盡量接近；在店時數低於設定的路線，會再加一間「接受支援」的門市（支援不算在每人最多間數裡；只支援每班在店時數也達門檻的店，每家每班最多 1 人支援）（3. 門市勾選；預設福壽、昌盛、中信、公園、福德、化成、頭前），只找同一間主要門市的；「不排一起」的店不會排在一起。產生後可以再手動調整（例如加人）。<br>在店時數＝每家店「每班在店時數」加總（營運指標僅在店 ÷ 2，店名旁的小數字）；每人在店時數＝在店時數 ÷ 人數。<br>
       提醒規則：超過每人最多間數（支援不算）；晚班有 NDD 寄件的店、HD 店排第一間，每條最多各 1 間；下面設定的組合不排一起。只提醒，不會擋。<br>
       自動排班會照這裡的路線，把人排進每一條路線（重的路線先排），平日、假日都用同一套。</p></div>
+  <div class="card"><h3>路線條件</h3>
+    <ul class="small" style="line-height:1.9;margin:0 0 8px;padding-left:18px">
+      <li>每人每班最多：早班 ${maxOf("am")} 間、晚班 ${maxOf("pm")} 間（上方可改）；在店時數低於 ${supBelow()} 小時的路線加一間支援門市</li>
+      <li>HD 店、晚班有 NDD 寄件的店排第一間，每條路線最多 1 間</li>
+      <li><b>晚班 HD 店一間、一個人</b>；下面勾選的 HD 店比較不忙，晚班可以<b>再加一間工作量最低的店</b></li>
+      <li>固定一起排、不排一起：看下面兩張卡片</li>
+    </ul>
+    ${hdSt.length ? `<div class="row">${hdSt.map(x => `<label class="rchip" style="cursor:pointer"><input type="checkbox" data-ch="hdPlus" data-id="${x.id}" ${hdPlus().includes(x.id) ? "checked" : ""}> ${esc(x.name)}</label>`).join("")}<span class="muted small">← 晚班可再加一間</span></div>` : `<p class="muted small">這間主要門市沒有 HD 店（到「3.門市」勾 HD）</p>`}</div>
   <div class="card"><h3>固定一起排（多人）</h3>
     <p class="muted small" style="margin-top:0">兩間店一定排在同一條路線，並指定要幾個人（例：榮華、昌平在對面，晚班 2 人一起跑）。自動產生路線時會照這裡排。</p>
     <div class="row" style="margin-bottom:8px"><select id="prA">${sopt}</select>＋<select id="prB">${sopt}</select>
@@ -854,11 +866,17 @@ function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = 
     locked.push({ st: st.map(x => x.s), h: A.h + B.h, n: Math.max(1, +p.n || 1), lock: true });
     L = L.filter(x => x !== A && x !== B);
   }
-  // 晚班 HD 店：一間自成一條路線、一個人，不加別的店（也不加支援）
-  if (sh === "pm") for (const x of L.filter(x => x.s.hd)) locked.push({ st: [x.s], h: x.h, n: 1, lock: true });
-  if (sh === "pm") L = L.filter(x => !x.s.hd);
-  const head = x => x.s.hd || (sh === "pm" && isNdd(x.s));
   const ban = (r, s) => r.st.some(t => bl.some(([a, b]) => (a === t.id && b === s.id) || (a === s.id && b === t.id)));
+  // 晚班 HD 店：一間自成一條路線、一個人，不加支援；「可再加一間」的 HD 店之後補一間工作量最低的店
+  const plusR = [];
+  if (sh === "pm") for (const x of L.filter(x => x.s.hd)) { const r = { st: [x.s], h: x.h, n: 1, lock: true }; locked.push(r); if (hdPlus().includes(x.s.id)) plusR.push(r); }
+  if (sh === "pm") L = L.filter(x => !x.s.hd);
+  const isHead = x => x.s.hd || (sh === "pm" && isNdd(x.s));
+  for (const r of plusR) {
+    const c = L.filter(x => !isHead(x) && !ban(r, x.s)).sort((a, b) => a.h - b.h)[0];
+    if (c) { r.st.push(c.s); r.h += c.h; L = L.filter(x => x !== c); }
+  }
+  const head = x => x.s.hd || (sh === "pm" && isNdd(x.s));
   const heads = L.filter(head).sort((a, b) => b.h - a.h), tails = L.filter(x => !head(x)).sort((a, b) => b.h - a.h);
   const R = Math.max(heads.length, Math.ceil(L.length / maxSt));
   const routes = heads.map(x => ({ st: [x.s], h: x.h }));
@@ -1118,6 +1136,7 @@ const CH = {
   showAll: t => { S.showAllEmps = t.checked; render(); },
   autoStart: t => { if (t.value) { S.autoStart = t.value.replace(/-/g, ""); S.plan = null; watchMonths(); render(); } },
   autoDays: t => { S.autoDays = +t.value; S.plan = null; watchMonths(); render(); },
+  hdPlus: t => { const set = new Set(hdPlus()); t.checked ? set.add(t.dataset.id) : set.delete(t.dataset.id); saveMaster({ hdPlus: [...set] }); toast("已儲存；重新產生晚班路線就會套用"); },
   autoMode: t => { S.autoMode = t.value; ls.set("zq2-automode", t.value); S.plan = null; render(); },
   hName: t => { const nm = t.value.trim(); if (!nm) return render(); saveMaster({ hubs: hubs().map(h => h.id === t.dataset.id ? { ...h, name: nm } : h) }); },
   rule: t => saveMaster({ rules: { ...rules(), [t.dataset.k]: t.value === "" ? 0 : +t.value } }),
@@ -1169,7 +1188,7 @@ function openRegionLater(id) { S.pendingRid = id; const t = setInterval(() => { 
 
 /* ================= 存檔 ================= */
 async function saveMaster(patch) {
-  const m = { hubs: hubs(), stores: stores(), rules: rules(), importOnly: M().importOnly ?? "智取店", routes: M().routes || {}, ban: bans(), ...(M().pair !== undefined ? { pair: M().pair } : {}), ...(M().ban2 !== undefined ? { ban2: M().ban2 } : {}), ...patch };
+  const m = { hubs: hubs(), stores: stores(), rules: rules(), importOnly: M().importOnly ?? "智取店", routes: M().routes || {}, ban: bans(), ...(M().pair !== undefined ? { pair: M().pair } : {}), ...(M().ban2 !== undefined ? { ban2: M().ban2 } : {}), ...(M().hdPlus !== undefined ? { hdPlus: M().hdPlus } : {}), ...patch };
   try { await S.store.set(P("cfg", "master"), m); } catch (e) { toast("儲存失敗：" + e.message); }
 }
 const patchStore = (id, patch) => saveMaster({ stores: stores().map(s => s.id === id ? { ...s, ...patch } : s) });
