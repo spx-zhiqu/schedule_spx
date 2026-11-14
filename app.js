@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v59";
+const APP_VER = "v60";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -374,13 +374,14 @@ function cellDense(c, av, hs, ds, src, eid, hs2) {
     }
     const ids = p.st || [], sp = p.sp || [], tot = (h || []).reduce((a, x) => a + x, 0), code = routeCode(p);
     const kids = ds && src ? emps().filter(x => x.id !== eid && onSh(src(ds, x.id), p.s)?.tr === eid) : [];
-    return `<div class="dn">${ids.map((id, i) => sp.includes(id) ? `<div class="spn">+${esc(sName(id))}<small>支援</small></div>` : `<div>${esc(sName(id))}${h && h[i] ? `<small>${fmtH(h[i])}</small>` : ""}</div>`).join("")}</div>`
+    // 第一行：早／晚＋這班總時數
+    return `<div class="dl"><b class="pill p-${p.s}">${SH1[p.s]}${tot ? ` ${fmt1(tot)}h` : ""}</b></div><div class="dn">${ids.map((id, i) => sp.includes(id) ? `<div class="spn">+${esc(sName(id))}<small>支援</small></div>` : `<div>${esc(sName(id))}${h && h[i] ? `<small>${fmtH(h[i])}</small>` : ""}</div>`).join("")}</div>`
       + (p.n ? `<div class="nt" title="${esc(p.n)}">✎ ${esc(p.n.length > 8 ? p.n.slice(0, 8) + "…" : p.n)}</div>` : "")
       + (kids.length ? `<div class="dh trn">🎓帶${kids.map(k => esc(k.name)).join("、")}</div>` : "");
   };
   const x = xOf(c);
   // 雙班：上下兩段，第二段用晚班（或早班）顏色、標一個小字
-  return avTag(av) + part(c, hs) + (x ? `<div class="dsep"></div><div class="d2 d2-${x.s}"><span class="d2t">${SH1[x.s]}</span>${part(x, hs2)}</div>` : "");
+  return avTag(av) + part(c, hs) + (x ? `<div class="dsep"></div><div class="d2 d2-${x.s}">${part(x, hs2)}</div>` : "");
 }
 function cellInner(c, av, hs, ds, src, eid, hs2) {
   if (S.dense) return cellDense(c, av, hs, ds, src, eid, hs2);
