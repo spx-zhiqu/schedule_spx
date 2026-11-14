@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v68";
+const APP_VER = "v69";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -883,7 +883,7 @@ function routesHtml() {
    - 「不排一起」的組合不會排在同一條
    - 「固定一起排」的兩間店自成一條路線、照設定的人數，不再加別的店
    - 晚班 HD 店一間一條路線、一個人 */
-function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = pairs()) {
+function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = pairs(), tgtH = 0) {
   const maxSt = maxOf(sh);
   let L = all.filter(s => s.hub === hub && needs(s)).map(s => ({ s, h: shHrs(s) || 0.1 }));
   const locked = [];
@@ -904,22 +904,32 @@ function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = 
     if (c) { r.st.push(c.s); r.h += c.h; L = L.filter(x => x !== c); }
   }
   const head = x => x.s.hd || (sh === "pm" && isNdd(x.s));
-  const heads = L.filter(head).sort((a, b) => b.h - a.h), tails = L.filter(x => !head(x)).sort((a, b) => b.h - a.h);
-  const R = Math.max(heads.length, Math.ceil(L.length / maxSt));
-  const routes = heads.map(x => ({ st: [x.s], h: x.h }));
-  while (routes.length < R && tails.length) { const x = tails.shift(); routes.push({ st: [x.s], h: x.h }); }
-  for (const x of tails) {
-    let best = null, bv = Infinity;
-    for (const r of routes) {
-      if (r.lock) continue;
-      if (r.st.length >= maxSt || ban(r, x.s)) continue;
-      const d = km(r.st[0], x.s), v = r.h + (d == null ? 0 : d * 0.05);
-      if (v < bv) { bv = v; best = r; }
+  const heads = L.filter(head).sort((a, b) => b.h - a.h);
+  // 照指定路線數 R 分組：重的店先放進目前時數最少、還有空位的路線，再微調（平均＋距離）
+  const build = R => {
+    const tails = L.filter(x => !head(x)).sort((a, b) => b.h - a.h);
+    const rs = heads.map(x => ({ st: [x.s], h: x.h }));
+    while (rs.length < R && tails.length) { const x = tails.shift(); rs.push({ st: [x.s], h: x.h }); }
+    for (const x of tails) {
+      let best = null, bv = Infinity;
+      for (const r of rs) {
+        if (r.st.length >= maxSt || ban(r, x.s)) continue;
+        const d = km(r.st[0], x.s), v = r.h + (d == null ? 0 : d * 0.3);
+        if (v < bv) { bv = v; best = r; }
+      }
+      if (best) { best.st.push(x.s); best.h += x.h; } else rs.push({ st: [x.s], h: x.h });
     }
-    if (best) { best.st.push(x.s); best.h += x.h; } else routes.push({ st: [x.s], h: x.h });
+    improveRoutes(rs, maxSt, ban, head);
+    return rs;
+  };
+  // 路線數：從最少條數開始，最多多開 3 條；有全區平均（tgtH）時選「每條時數最接近全區平均」的條數
+  // （多開一條就多一個人，所以要明顯比較平均才多開）
+  const minR = Math.max(heads.length, Math.ceil(L.length / maxSt));
+  let routes = build(minR);
+  if (tgtH) {
+    const score = rs => rs.reduce((a, r) => a + (r.h - tgtH) ** 2, 0) + 0.5 * tgtH * rs.length;
+    for (let R = minR + 1; R <= Math.min(L.length, minR + 3); R++) { const rs = build(R); if (score(rs) < score(routes)) routes = rs; }
   }
-  // 工作量低的路線：加一間同一間主要門市的「接受支援」門市（不算在每人最多間數裡）（同一間主要門市優先，支援人數少、時數大的先）
-  // 只支援本身工作量夠大的店（每班在店時數 ≥ 門檻），避免輕的店互相支援；每家店每班最多 1 人支援
   routes.push(...locked);
   // 晚班 HD 店只給一個人，不當支援對象
   const lim = supBelow(), supL = all.filter(s => s.hub === hub && needs(s) && isSup(s) && shHrs(s) >= lim && !(sh === "pm" && s.hd));
@@ -930,6 +940,42 @@ function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = 
   }
   const pre = sh === "pm" ? "N" : "R";
   return routes.sort((a, b) => b.h - a.h).map((r, i) => ({ id: uid("t"), code: pre + pad(i + 1), hub, st: r.st.map(s => s.id), sup: r.sup || [], n: r.n || 1 }));
+}
+// 路線微調：在「每人最多間數、不排一起、HD／NDD 店當第一間」都成立下，反覆搬移／交換店家，
+// 讓每條路線的在店時數接近平均，同時同一條路線的店彼此要近（成本＝時數偏差² ＋ 距離 × 權重）
+const KM_W = 0.8;   // 1 公里大約等於多少「時數偏差²」
+function improveRoutes(routes, maxSt, ban, head) {
+  const free = routes.filter(r => !r.lock && r.st.length);
+  if (free.length < 2) return;
+  const H = x => shHrs(x) || 0.1, isH = x => head({ s: x });
+  const tgt = free.reduce((a, r) => a + r.st.reduce((b, x) => b + H(x), 0), 0) / free.length;
+  const dist = st => { let d = 0; for (let i = 0; i < st.length; i++) for (let j = i + 1; j < st.length; j++) { const k = km(st[i], st[j]); if (k != null) d += k; } return d; };
+  const cost = st => { const h = st.reduce((a, x) => a + H(x), 0); return (h - tgt) ** 2 + KM_W * dist(st); };
+  const okSt = st => st.length >= 1 && st.length <= maxSt && st.filter(isH).length <= 1 && !st.some((x, i) => st.some((y, j) => j > i && ban({ st: [x] }, y)));
+  for (let it = 0; it < 60; it++) {
+    let better = false;
+    for (let i = 0; i < free.length; i++) for (let j = 0; j < free.length; j++) {
+      if (i === j) continue;
+      const A = free[i], B = free[j];
+      for (const x of [...A.st]) {
+        if (isH(x) || !A.st.includes(x)) continue;
+        const base = cost(A.st) + cost(B.st);
+        const a1 = A.st.filter(y => y !== x), b1 = [...B.st, x];
+        if (okSt(a1) && okSt(b1) && cost(a1) + cost(b1) < base - 1e-6) { A.st = a1; B.st = b1; better = true; continue; }
+        for (const y of [...B.st]) {
+          if (isH(y)) continue;
+          const a2 = A.st.map(z => z === x ? y : z), b2 = B.st.map(z => z === y ? x : z);
+          if (okSt(a2) && okSt(b2) && cost(a2) + cost(b2) < base - 1e-6) { A.st = a2; B.st = b2; better = true; break; }
+        }
+      }
+    }
+    if (!better) break;
+  }
+  // 整理：HD／NDD 店放第一間，其他照離第一間由近到遠；更新時數
+  for (const r of free) {
+    const h0 = r.st.find(isH) || r.st[0], rest = r.st.filter(x => x !== h0).sort((a, b) => (km(h0, a) ?? 0) - (km(h0, b) ?? 0));
+    r.st = [h0, ...rest]; r.h = r.st.reduce((a, x) => a + H(x), 0);
+  }
 }
 // 已存的路線若違反晚班 HD 規則（例如之前產生的、或手動加的），自動排班時先拆開：
 // HD 店自己一條、一個人（勾「可再加一間」的保留第二間），其他店另成一條；晚班 HD 店也不接支援
@@ -954,7 +1000,19 @@ function genAll(list, all = stores(), hs = hubs(), bl = bans(), base = M().route
   // list: [[k, hub]]；取代這幾間主要門市在這些班別的路線，代號同一班別全區連號
   const routes = { ...base }, hubOf = r => all.find(s => s.id === r.st?.[0])?.hub || r.hub;
   const cnt = { am: {}, pm: {} };
-  for (const [k, hub] of list) routes[k] = [...(routes[k] || []).filter(r => hubOf(r) !== hub), ...genRoutes(hub, k.slice(3), all, bansFor(k.slice(3), bl, all), cnt[k.slice(3)])];
+  // 先試排一次全部主要門市，算出全區「每條（非固定）路線平均時數」，再照這個平均正式產生
+  const tgt = {};
+  for (const sh of ["am", "pm"]) {
+    let h = 0, n = 0;
+    for (const hb of hs) for (const r of genRoutes(hb.id, sh, all, bansFor(sh, bl, all), {}, pairs())) {
+      const st = r.st.map(id => all.find(x => x.id === id)).filter(Boolean);
+      if (sh === "pm" && st.some(x => x.hd)) continue;   // 晚班 HD、固定一起排的路線不能調，不算進平均
+      if ((+r.n || 1) > 1) continue;
+      h += st.reduce((a, x) => a + (shHrs(x) || 0.1), 0); n++;
+    }
+    tgt[sh] = n ? h / n : 0;
+  }
+  for (const [k, hub] of list) routes[k] = [...(routes[k] || []).filter(r => hubOf(r) !== hub), ...genRoutes(hub, k.slice(3), all, bansFor(k.slice(3), bl, all), cnt[k.slice(3)], pairs(), tgt[k.slice(3)])];
   for (const k of new Set(list.map(([k]) => k))) { const pre = k.endsWith("pm") ? "N" : "R"; routes[k] = hs.flatMap(h => routes[k].filter(r => hubOf(r) === h.id)).map((r, i) => ({ ...r, code: pre + pad(i + 1) })); }
   delete routes.we_am; delete routes.we_pm;
   return routes;
