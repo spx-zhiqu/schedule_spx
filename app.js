@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v63";
+const APP_VER = "v64";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -115,6 +115,7 @@ function routeWarn(rt, sh) {
   if (sh === "pm" && ndd.length > Math.max(1, +rt.n || 1)) w.push(`${ndd.length} 間有 NDD 寄件`);
   if (sh === "pm" && ndd.length && !isNdd(l[0]) && !l[0].hd) w.push("NDD 店要排第一間");
   if (hd.length > 1) w.push(`${hd.length} 間 HD 店`);
+  if (sh === "pm" && hd.length && l.length > 1) w.push("晚班 HD 店只排一間");
   if (hd.length && !l[0].hd && !(sh === "pm" && isNdd(l[0]))) w.push("HD 店要排第一間");
   if (sh === "pm" && hd.length && isNdd(l[0]) && !l[0].hd) w.push("HD 店排在第二間");
   for (const [a, b] of bansFor(sh)) if (rt.st.includes(a) && rt.st.includes(b)) w.push(`${sName(a)}＋${sName(b)} 不排一起`);
@@ -634,7 +635,9 @@ function autoPlanHub(HUB, plan) {
           const had = Math.max(0, ...rt.st.map(id => (cov[id] || []).length));
           return { ids, sp: (rt.sup || []).filter(id => storeBy(id) && needs(storeBy(id)) && !rt.st.includes(id)), n: Math.max(1, (+rt.n || 1) - had), h: rtHrs(rt), hub: routeHub(rt) };
         }).filter(r => r.ids.length);
-        const rest = need.filter(s => !inRt.has(s.id));
+        let rest = need.filter(s => !inRt.has(s.id));
+        // 晚班 HD 店一間一個人
+        if (sh === "pm") { rest.filter(s => s.hd).forEach(s => routes.push(toR([s]))); rest = rest.filter(s => !s.hd); }
         if (rest.length) routes.push(...buildRoutes(rest, sh, Math.max(1, target - routes.length)).map(r => toR(r.stores)));
         routes.sort((a, b) => b.h - a.h);
       } else routes = buildRoutes(need, sh, target).map(r => toR(r.stores));
@@ -839,7 +842,8 @@ function routesHtml() {
    - 路線數用最少的：max（HD／NDD 店數，總間數 ÷ 每條最多間數）
    - 依 workload 平均分配：由重到輕，每家店放進目前時數最少、還有空位的路線（有座標時同樣條件下選近的）
    - 「不排一起」的組合不會排在同一條
-   - 「固定一起排」的兩間店自成一條路線、照設定的人數，不再加別的店 */
+   - 「固定一起排」的兩間店自成一條路線、照設定的人數，不再加別的店
+   - 晚班 HD 店一間一條路線、一個人 */
 function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = pairs()) {
   const maxSt = maxOf(sh);
   let L = all.filter(s => s.hub === hub && needs(s)).map(s => ({ s, h: shHrs(s) || 0.1 }));
@@ -850,6 +854,9 @@ function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = 
     locked.push({ st: st.map(x => x.s), h: A.h + B.h, n: Math.max(1, +p.n || 1), lock: true });
     L = L.filter(x => x !== A && x !== B);
   }
+  // 晚班 HD 店：一間自成一條路線、一個人，不加別的店（也不加支援）
+  if (sh === "pm") for (const x of L.filter(x => x.s.hd)) locked.push({ st: [x.s], h: x.h, n: 1, lock: true });
+  if (sh === "pm") L = L.filter(x => !x.s.hd);
   const head = x => x.s.hd || (sh === "pm" && isNdd(x.s));
   const ban = (r, s) => r.st.some(t => bl.some(([a, b]) => (a === t.id && b === s.id) || (a === s.id && b === t.id)));
   const heads = L.filter(head).sort((a, b) => b.h - a.h), tails = L.filter(x => !head(x)).sort((a, b) => b.h - a.h);
