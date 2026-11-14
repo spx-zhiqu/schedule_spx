@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v62";
+const APP_VER = "v63";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -103,6 +103,10 @@ const bans = () => M().ban || [];
 const PAIR_DEFAULT = [["榮華", "昌平", "pm", 2]];
 const pairs = () => M().pair ?? PAIR_DEFAULT.map(([a, b, sh, n]) => { const A = stores().find(x => x.name === a), B = stores().find(x => x.name === b); return A && B ? { a: A.id, b: B.id, sh, n } : null; }).filter(Boolean);
 const PAIR_SH = { am: "早班", pm: "晚班", both: "早晚班" };
+// 只限某一班不排一起（ban 是早晚都不排）；預設中原＋昌明晚班太重
+const BAN2_DEFAULT = [["中原", "昌明", "pm"]];
+const bans2 = (list = stores()) => M().ban2 ?? BAN2_DEFAULT.map(([a, b, sh]) => { const A = list.find(x => x.name === a), B = list.find(x => x.name === b); return A && B ? { a: A.id, b: B.id, sh } : null; }).filter(Boolean);
+const bansFor = (sh, base = bans(), list = stores()) => [...base, ...bans2(list).filter(x => x.sh === sh).map(x => [x.a, x.b])];
 // 路線檢查（只提醒，不擋）
 function routeWarn(rt, sh) {
   const l = (rt.st || []).map(storeBy).filter(Boolean), w = [];
@@ -113,7 +117,7 @@ function routeWarn(rt, sh) {
   if (hd.length > 1) w.push(`${hd.length} 間 HD 店`);
   if (hd.length && !l[0].hd && !(sh === "pm" && isNdd(l[0]))) w.push("HD 店要排第一間");
   if (sh === "pm" && hd.length && isNdd(l[0]) && !l[0].hd) w.push("HD 店排在第二間");
-  for (const [a, b] of bans()) if (rt.st.includes(a) && rt.st.includes(b)) w.push(`${sName(a)}＋${sName(b)} 不排一起`);
+  for (const [a, b] of bansFor(sh)) if (rt.st.includes(a) && rt.st.includes(b)) w.push(`${sName(a)}＋${sName(b)} 不排一起`);
   return w;
 }
 // 某天某班，每家店由誰負責（整個區域的人都算，跨店支援也算）
@@ -798,7 +802,7 @@ function routesHtml() {
   }).join("");
   const ppl = list.reduce((a, r) => a + (+r.n || 1), 0), tot = list.reduce((a, r) => a + rtHrs(r), 0);
   const inHub = id => S.hub === ALL || storeBy(id)?.hub === S.hub;
-  const banList = bans().filter(([a, b]) => inHub(a) || inHub(b));
+  const banList = [...bans().map(([a, b]) => ({ a, b, sh: "both" })), ...bans2()].filter(x => inHub(x.a) || inHub(x.b));
   const pairList = pairs().filter(p => inHub(p.a) || inHub(p.b));
   const sopt = hubSt.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
   return `<div class="ovbar">${Object.entries(RSET).map(([kk, v]) => `<button class="ovtab ${k === kk ? "on" : ""}" data-act="rset" data-k="${kk}">${v}</button>`).join("")}</div>
@@ -826,8 +830,8 @@ function routesHtml() {
       <input type="number" id="prN" min="1" max="5" value="2" style="width:56px"> 人 <button class="btn" data-act="pairAdd">新增</button></div>
     ${pairList.length ? `<div class="row">${pairList.map(p => `<span class="rchip">${esc(sName(p.a))}＋${esc(sName(p.b))}・${PAIR_SH[p.sh] || ""}・${p.n} 人<a data-act="pairDel" data-a="${p.a}" data-b="${p.b}" data-sh="${p.sh}">✕</a></span>`).join("")}</div>` : `<p class="muted small">還沒有設定</p>`}</div>
   <div class="card"><h3>不排一起的門市</h3>
-    <div class="row" style="margin-bottom:8px"><select id="banA">${sopt}</select>＋<select id="banB">${sopt}</select><button class="btn" data-act="banAdd">新增</button></div>
-    ${banList.length ? `<div class="row">${banList.map(([a, b], i) => `<span class="rchip">${esc(sName(a))}＋${esc(sName(b))}<a data-act="banDel" data-a="${a}" data-b="${b}">✕</a></span>`).join("")}</div>` : `<p class="muted small">還沒有設定</p>`}</div>`;
+    <div class="row" style="margin-bottom:8px"><select id="banA">${sopt}</select>＋<select id="banB">${sopt}</select><select id="banSh"><option value="both">早晚班</option><option value="pm">只限晚班</option><option value="am">只限早班</option></select><button class="btn" data-act="banAdd">新增</button></div>
+    ${banList.length ? `<div class="row">${banList.map(x => `<span class="rchip">${esc(sName(x.a))}＋${esc(sName(x.b))}${x.sh !== "both" ? `・只限${PAIR_SH[x.sh]}` : ""}<a data-act="banDel" data-a="${x.a}" data-b="${x.b}" data-sh="${x.sh}">✕</a></span>`).join("")}</div>` : `<p class="muted small">還沒有設定</p>`}</div>`;
 }
 /* ---------- 自動產生路線 ----------
    照門市資料（workload 換算的在店時數、HD、NDD 寄件）和規則把同一間主要門市底下的店分組，不設時數上限：
@@ -836,7 +840,7 @@ function routesHtml() {
    - 依 workload 平均分配：由重到輕，每家店放進目前時數最少、還有空位的路線（有座標時同樣條件下選近的）
    - 「不排一起」的組合不會排在同一條
    - 「固定一起排」的兩間店自成一條路線、照設定的人數，不再加別的店 */
-function genRoutes(hub, sh, all = stores(), bl = bans(), supCnt = {}, pl = pairs()) {
+function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = pairs()) {
   const maxSt = maxOf(sh);
   let L = all.filter(s => s.hub === hub && needs(s)).map(s => ({ s, h: shHrs(s) || 0.1 }));
   const locked = [];
@@ -878,7 +882,7 @@ function genAll(list, all = stores(), hs = hubs(), bl = bans(), base = M().route
   // list: [[k, hub]]；取代這幾間主要門市在這些班別的路線，代號同一班別全區連號
   const routes = { ...base }, hubOf = r => all.find(s => s.id === r.st?.[0])?.hub || r.hub;
   const cnt = { am: {}, pm: {} };
-  for (const [k, hub] of list) routes[k] = [...(routes[k] || []).filter(r => hubOf(r) !== hub), ...genRoutes(hub, k.slice(3), all, bl, cnt[k.slice(3)])];
+  for (const [k, hub] of list) routes[k] = [...(routes[k] || []).filter(r => hubOf(r) !== hub), ...genRoutes(hub, k.slice(3), all, bansFor(k.slice(3), bl, all), cnt[k.slice(3)])];
   for (const k of new Set(list.map(([k]) => k))) { const pre = k.endsWith("pm") ? "N" : "R"; routes[k] = hs.flatMap(h => routes[k].filter(r => hubOf(r) === h.id)).map((r, i) => ({ ...r, code: pre + pad(i + 1) })); }
   delete routes.we_am; delete routes.we_pm;
   return routes;
@@ -1084,7 +1088,7 @@ const ACT = {
   pairAdd: () => {
     const a = $("#prA").value, b = $("#prB").value, sh = $("#prSh").value, n = Math.max(1, +$("#prN").value || 1);
     if (!a || !b || a === b) return toast("請選兩家不同的門市");
-    if (bans().some(([x, y]) => (x === a && y === b) || (x === b && y === a))) return toast("這兩間在「不排一起」裡，請先刪掉");
+    if (bans().some(([x, y]) => (x === a && y === b) || (x === b && y === a)) || bans2().some(x => ((x.a === a && x.b === b) || (x.a === b && x.b === a)) && (sh === "both" || x.sh === sh))) return toast("這兩間在「不排一起」裡，請先刪掉");
     const rest = pairs().filter(p => !(((p.a === a && p.b === b) || (p.a === b && p.b === a)) && p.sh === sh));
     saveMaster({ pair: [...rest, { a, b, sh, n }] }); toast("已新增；按「自動產生」重新產生路線就會套用");
   },
@@ -1092,10 +1096,15 @@ const ACT = {
   banAdd: () => {
     const a = $("#banA").value, b = $("#banB").value;
     if (!a || !b || a === b) return toast("請選兩家不同的門市");
-    if (bans().some(([x, y]) => (x === a && y === b) || (x === b && y === a))) return toast("已經有這個組合");
-    saveMaster({ ban: [...bans(), [a, b]] });
+    const sh = $("#banSh")?.value || "both", same = (x, y) => (x === a && y === b) || (x === b && y === a);
+    if (bans().some(([x, y]) => same(x, y)) || bans2().some(x => same(x.a, x.b) && x.sh === sh)) return toast("已經有這個組合");
+    if (pairs().some(p => same(p.a, p.b) && (sh === "both" || p.sh === sh || p.sh === "both"))) return toast("這兩間在「固定一起排」裡，請先刪掉");
+    if (sh === "both") saveMaster({ ban: [...bans(), [a, b]], ban2: bans2().filter(x => !same(x.a, x.b)) });
+    else saveMaster({ ban2: [...bans2(), { a, b, sh }] });
   },
-  banDel: el => saveMaster({ ban: bans().filter(([x, y]) => !(x === el.dataset.a && y === el.dataset.b)) }),
+  banDel: el => el.dataset.sh && el.dataset.sh !== "both"
+    ? saveMaster({ ban2: bans2().filter(x => !(x.a === el.dataset.a && x.b === el.dataset.b && x.sh === el.dataset.sh)) })
+    : saveMaster({ ban: bans().filter(([x, y]) => !(x === el.dataset.a && y === el.dataset.b)) }),
 };
 const CH = {
   onlyMiss: t => { S.onlyMiss = t.checked; render(); },
@@ -1153,7 +1162,7 @@ function openRegionLater(id) { S.pendingRid = id; const t = setInterval(() => { 
 
 /* ================= 存檔 ================= */
 async function saveMaster(patch) {
-  const m = { hubs: hubs(), stores: stores(), rules: rules(), importOnly: M().importOnly ?? "智取店", routes: M().routes || {}, ban: bans(), ...(M().pair !== undefined ? { pair: M().pair } : {}), ...patch };
+  const m = { hubs: hubs(), stores: stores(), rules: rules(), importOnly: M().importOnly ?? "智取店", routes: M().routes || {}, ban: bans(), ...(M().pair !== undefined ? { pair: M().pair } : {}), ...(M().ban2 !== undefined ? { ban2: M().ban2 } : {}), ...patch };
   try { await S.store.set(P("cfg", "master"), m); } catch (e) { toast("儲存失敗：" + e.message); }
 }
 const patchStore = (id, patch) => saveMaster({ stores: stores().map(s => s.id === id ? { ...s, ...patch } : s) });
