@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v69";
+const APP_VER = "v70";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -495,7 +495,8 @@ function autoHtml() {
       <label>從哪天開始<br><input type="date" data-ch="autoStart" value="${isoOf(S.autoStart)}"></label>
       <label>排幾天<br><select data-ch="autoDays">${[7, 14, 21, 28].map(n => `<option value="${n}" ${n === S.autoDays ? "selected" : ""}>${n} 天</option>`).join("")}</select></label>
       <label>已經排的格子<br><select data-ch="autoMode">${[["keepOff", "保留休假，門市全部重排"], ["fill", "全部保留，只補空的"], ["all", "全部清掉重排（休假也清）"]].map(([k, v]) => `<option value="${k}" ${autoMode() === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-      ${S.hub === ALL ? `<label class="small" style="align-self:flex-end"><input type="checkbox" data-ch="autoCross" ${S.autoCross !== false ? "checked" : ""}> 人手不夠時，找其他主要門市的人補</label>` : ""}
+      ${S.hub === ALL ? `<label class="small" style="align-self:flex-end"><input type="checkbox" data-ch="autoCross" ${S.autoCross !== false ? "checked" : ""}> 人手不夠時，找其他主要門市的人補</label>
+      <label class="small" style="align-self:flex-end"><input type="checkbox" data-ch="autoAnySh" ${S.autoAnySh !== false ? "checked" : ""}> 還不夠時，只上早班／晚班的人也可以排另一班</label>` : ""}
       <span class="spacer"></span>
       <button class="btn primary big" data-act="autoRun">產生班表</button>
     </div>
@@ -585,6 +586,8 @@ function autoPlan() {
   for (const h of hubs()) { const r = autoPlanHub(h.id, plan, { noOff: true }); r.notes.forEach(x => notes.push(`${h.name}：${x}`)); }
   // 第 2 輪：還有漏排，就找其他主要門市當天還沒排、可以上班的人去補（人手不夠的主要門市優先）
   if (S.autoCross !== false) for (const h of hubs()) autoPlanHub(h.id, plan, { noOff: true, cross: true });
+  // 第 3 輪：還有漏排，連「只上早班／只上晚班」的人當天沒排班的也可以排到另一班（畫休、每週天數照守）
+  if (S.autoCross !== false && S.autoAnySh !== false) for (const h of hubs()) autoPlanHub(h.id, plan, { noOff: true, cross: true, anyShift: true });
   const days = range(S.autoStart, S.autoDays).map(d => d.ds);
   // 漏排原因：當天這一班還有沒有人可以排（給主管看是人不夠，還是條件太嚴）
   const get = (ds, eid) => plan[ds + "_" + eid] !== undefined ? plan[ds + "_" + eid] : cell(ds, eid);
@@ -596,14 +599,14 @@ function autoPlan() {
     if (!miss) continue;
     const ppl = emps().filter(e => e.active !== false && !e.trainee && eHubs(e).length && (!e.shift || e.shift === "any" || e.shift === sh));
     let off = 0, lv = 0, cap = 0, free = 0;
-    for (const e of ppl) { const c = get(ds, e.id); if (work(c)) continue; const av = avOf(ds, e.id); if (c?.s === "off" && cell(ds, e.id)?.s === "off") off++; else if (av && avBad(av, sh)) lv++; else if (wk(e.id, ds) >= weekCap(e)) cap++; else free++; }
+    for (const e of ppl) { const c = get(ds, e.id); if (work(c)) continue; const av = avOf(ds, e.id); if (c?.s === "off" && cell(ds, e.id)?.s === "off" && !cell(ds, e.id)?.auto) off++; else if (av && avBad(av, sh)) lv++; else if (wk(e.id, ds) >= weekCap(e)) cap++; else free++; }
     short.push(`${+ds.slice(4, 6)}/${+ds.slice(6)}${SH1[sh]}漏${miss}（指休${off}、畫休${lv}、已滿每週天數${cap}、還可排${free}）`);
   }
   if (short.length) notes.push("漏排原因：" + short.slice(0, 8).join("、") + (short.length > 8 ? ` …共 ${short.length} 班` : ""));
   // 最後：沒排到班的人標「休」
   for (const e of emps().filter(e => e.active !== false && !e.trainee && eHubs(e).length)) for (const ds of days) {
     const k = ds + "_" + e.id, c = plan[k] !== undefined ? plan[k] : cell(ds, e.id);
-    if (!c) plan[k] = { s: "off", st: [] };
+    if (!c) plan[k] = { s: "off", st: [], auto: true };
   }
   return { hub: ALL, start: S.autoStart, days: S.autoDays, cells: plan, notes };
 }
@@ -630,7 +633,8 @@ function autoPlanHub(HUB, plan, opt = {}) {
     if (plan[ds + "_" + e.id] !== undefined) continue;   // 全部門市模式：前面那間已經排過這格
     const c = cell(ds, e.id);
     // 單一主要門市重排時，排在別間主要門市的班（去支援）不動；全部門市一起排時全部重排
-    if ((S.hub !== ALL && elsewhere(c)) || c?.tr || (mode === "keepOff" && c?.s === "off")) continue;
+    // 「保留休假」只保留主管排的休（指休）；之前自動排班補上的「休」（auto）會清掉重排
+    if ((S.hub !== ALL && elsewhere(c)) || c?.tr || (mode === "keepOff" && c?.s === "off" && !c.auto)) continue;
     plan[ds + "_" + e.id] = null;
   }
   for (const ds of days) {
@@ -641,7 +645,7 @@ function autoPlanHub(HUB, plan, opt = {}) {
       if (!need.length) continue;
       const cand = people.filter(e => {
         if (used.has(e.id)) return false;
-        if (e.shift && e.shift !== "any" && e.shift !== sh) return false;
+        if (!opt.anyShift && e.shift && e.shift !== "any" && e.shift !== sh) return false;
         const av = avOf(ds, e.id); if (av && avBad(av, sh)) return false;
         if (daysInWeek(e.id, ds) >= weekCap(e)) return false;
         if (streak(e.id, ds) >= consecCap()) return false;
@@ -697,7 +701,7 @@ function autoPlanHub(HUB, plan, opt = {}) {
       }
     }
     // 沒排到班的人標「休」（保留模式下不動原本的格子；有多間主要門市的人留空，讓別間還能排）
-    if (!opt.noOff) for (const e of members) if (!get(ds, e.id) && eHubs(e).length <= 1) plan[ds + "_" + e.id] = { s: "off", st: [] };
+    if (!opt.noOff) for (const e of members) if (!get(ds, e.id) && eHubs(e).length <= 1) plan[ds + "_" + e.id] = { s: "off", st: [], auto: true };
   }
   if (!members.length) notes.push("這間主要門市沒有啟用中的人員");
   if (!hubStores.length) notes.push("這間主要門市沒有門市");
@@ -1247,6 +1251,7 @@ const CH = {
     saveMaster({ stores: stores().map(x => HD_DEFAULT.includes(x.name) ? { ...x, hd: true } : x) }); toast("已勾選；到「4.路線」重新產生路線");
   },
   hdPlus: t => { const set = new Set(hdPlus()); t.checked ? set.add(t.dataset.id) : set.delete(t.dataset.id); saveMaster({ hdPlus: [...set] }); toast("已儲存；重新產生晚班路線就會套用"); },
+  autoAnySh: t => { S.autoAnySh = t.checked; S.plan = null; render(); },
   autoCross: t => { S.autoCross = t.checked; S.plan = null; render(); },
   autoMode: t => { S.autoMode = t.value; ls.set("zq2-automode", t.value); S.plan = null; render(); },
   hName: t => { const nm = t.value.trim(); if (!nm) return render(); saveMaster({ hubs: hubs().map(h => h.id === t.dataset.id ? { ...h, name: nm } : h) }); },
