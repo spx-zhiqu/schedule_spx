@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v64";
+const APP_VER = "v65";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -80,7 +80,8 @@ const loadOf = s => +(s.load ?? s.loadAm ?? s.loadPm) || 1;
 const WL_RATE = 350;
 const shHrs = s => { if (!s) return 0; const w = +(s.load ?? s.loadAm); return w > 0 ? w / WL_RATE / 2 : 0; };
 // NDD：有 NDD 打包數就算有 NDD 寄件
-const isNdd = s => !!s && (+s.nddCnt > 0 || (s.nddCnt == null && !!s.ndd));
+// NDD 寄件：門市頁手動勾選為準；沒勾過的店才看 NDD 打包數 > 0
+const isNdd = s => !!s && (typeof s.ndd === "boolean" ? s.ndd : +s.nddCnt > 0);
 const fmtH = h => (Math.round(h * 100) / 100).toFixed(2);
 const FLAGS = [["hd", "HD"], ["pick", "純取件"], ["ndd", "NDD寄件"], ["fbs", "FBS寄件"], ["rearr", "重新分配"], ["sup", "接受支援"]];
 // 每人每班最多跑幾間（可在「4. 路線」改；早班預設 3、晚班預設 2）
@@ -756,7 +757,7 @@ function storesHtml() {
     <td><input type="number" min="0" step="any" value="${s.load ?? s.loadAm ?? ""}" placeholder="1" data-ch="sLoad" data-id="${s.id}" style="width:80px"></td>
     <td><input type="number" min="0" value="${s.nddCnt ?? ""}" placeholder="—" data-ch="sNdd" data-id="${s.id}" style="width:64px"></td>
     <td class="num"><b>${shHrs(s) ? fmtH(shHrs(s)) : "—"}</b></td>
-    ${FLAGS.map(([k]) => k === "ndd" ? `<td class="ctr">${isNdd(s) ? "有" : "—"}</td>` : `<td class="ctr"><input type="checkbox" data-ch="sFlag" data-k="${k}" data-id="${s.id}" ${(k === "sup" ? isSup(s) : s[k]) ? "checked" : ""}></td>`).join("")}
+    ${FLAGS.map(([k]) => `<td class="ctr"><input type="checkbox" data-ch="sFlag" data-k="${k}" data-id="${s.id}" ${(k === "sup" ? isSup(s) : k === "ndd" ? isNdd(s) : s[k]) ? "checked" : ""}></td>`).join("")}
     <td><select data-ch="sHub" data-id="${s.id}">${hubOpts(s.hub)}</select></td>
     <td class="nowrap"><button class="btn small" data-act="sMove" data-id="${s.id}" data-n="-1">↑</button> <button class="btn small" data-act="sMove" data-id="${s.id}" data-n="1">↓</button> <button class="btn small danger" data-act="sDel" data-id="${s.id}">刪</button></td></tr>`).join("");
   const noXY = list.filter(s => !hasXY(s) && s.addr).length;
@@ -767,16 +768,15 @@ function storesHtml() {
       <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden>
       <label class="btn" for="addrFile" title="Excel／CSV：門市名稱＋地址">匯入門市地址…</label><input type="file" id="addrFile" data-ch="addrFile" accept=".xlsx,.xls,.csv" hidden>
       <label class="btn" for="typeFile" title="Excel／CSV：門市名稱＋HD、純取件、重新分配">匯入門市類型…</label><input type="file" id="typeFile" data-ch="typeFile" accept=".xlsx,.xls,.csv" hidden>
-      <button class="btn" data-act="nddImg" title="上傳 NDD 打包數截圖，自動辨識門市和數字">匯入 NDD 打包數（截圖）…</button>
       <span class="spacer"></span>
     </div>
     <div class="scrollx"><table class="list emp"><tr><th>#</th><th>門市</th><th>地址</th><th>workload<br>（整天）</th><th>NDD<br>打包數</th><th>每班<br>在店時數</th>${FLAGS.map(([, v]) => `<th>${v}</th>`).join("")}<th>主要門市</th><th></th></tr>${rows || `<tr><td colspan="15" class="muted" style="padding:16px">還沒有門市</td></tr>`}</table></div>
     <p class="muted small" style="line-height:1.8">
-      <b>每班在店時數</b>＝workload ÷ 350 ÷ 2（表格可以直接改，會自動儲存）；有 NDD 打包數就算有 NDD 寄件。<br>
+      <b>每班在店時數</b>＝workload ÷ 350 ÷ 2（表格可以直接改，會自動儲存）。<b>HD、NDD 寄件</b>請直接在表格勾選（晚班 NDD 店、HD 店排路線第一間；晚班 HD 店一間一個人）。<br>
       <b>匯入營運指標週報</b>：直接選每週的門市週報檔，會讀最新一週的 workload（Avg 4W）。<br>
       <b>匯入門市地址</b>：Excel 或 CSV，標題列要有「門市」和「地址」兩欄；只更新地址。<br>
       <b>匯入門市類型</b>：Excel 或 CSV，標題列要有「門市」，再加「HD」「純取件」「重新分配」欄（填 V、Y、是、1 都算勾，空白＝不改），或一欄「類型」寫「HD、重新分配」這樣；只更新類型。<br>
-      <b>匯入 NDD 打包數（截圖）</b>：上傳截圖，系統辨識門市名稱和數字，確認後才寫入；辨識錯的可以在預覽直接改。<br>
+
       系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
 }
 
