@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v60";
+const APP_VER = "v61";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -754,7 +754,8 @@ function storesHtml() {
       <input type="text" id="newStore" placeholder="門市名稱" style="width:110px"><input type="text" id="newStoreAddr" placeholder="地址（選填）" style="width:220px">
       <button class="btn primary" data-act="addStore">新增門市</button>
       <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden>
-      <label class="btn" for="infoFile" title="Excel／CSV：門市名稱＋地址，和（或）HD、純取件、重新分配">匯入門市地址／類型…</label><input type="file" id="infoFile" data-ch="infoFile" accept=".xlsx,.xls,.csv" hidden>
+      <label class="btn" for="addrFile" title="Excel／CSV：門市名稱＋地址">匯入門市地址…</label><input type="file" id="addrFile" data-ch="addrFile" accept=".xlsx,.xls,.csv" hidden>
+      <label class="btn" for="typeFile" title="Excel／CSV：門市名稱＋HD、純取件、重新分配">匯入門市類型…</label><input type="file" id="typeFile" data-ch="typeFile" accept=".xlsx,.xls,.csv" hidden>
       <button class="btn" data-act="nddImg" title="上傳 NDD 打包數截圖，自動辨識門市和數字">匯入 NDD 打包數（截圖）…</button>
       <span class="spacer"></span>
     </div>
@@ -762,7 +763,8 @@ function storesHtml() {
     <p class="muted small" style="line-height:1.8">
       <b>每班在店時數</b>＝workload ÷ 350 ÷ 2（表格可以直接改，會自動儲存）；有 NDD 打包數就算有 NDD 寄件。<br>
       <b>匯入營運指標週報</b>：直接選每週的門市週報檔，會讀最新一週的 workload（Avg 4W）。<br>
-      <b>匯入門市地址／類型</b>：Excel 或 CSV，第一列標題要有「門市」，再加「地址」和（或）「HD」「純取件」「重新分配」欄（填 V、Y、是、1 都算勾）；只更新有填的欄位。<br>
+      <b>匯入門市地址</b>：Excel 或 CSV，標題列要有「門市」和「地址」兩欄；只更新地址。<br>
+      <b>匯入門市類型</b>：Excel 或 CSV，標題列要有「門市」，再加「HD」「純取件」「重新分配」欄（填 V、Y、是、1 都算勾，空白＝不改），或一欄「類型」寫「HD、重新分配」這樣；只更新類型。<br>
       <b>匯入 NDD 打包數（截圖）</b>：上傳截圖，系統辨識門市名稱和數字，確認後才寫入；辨識錯的可以在預覽直接改。<br>
       系統會自動用地址算出各店位置，排班時把距離近的店分給同一個人；位置算不出來的店，會照列表順序和相鄰的店排在一起。</p></div>`;
 }
@@ -1092,7 +1094,8 @@ const CH = {
   eTr: t => patchEmp(t.dataset.id, { trainee: t.checked }),
   lvYm: t => { if (t.value) { S.leaveYm = t.value; render(); } },
   storeFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreFile(f); },
-  infoFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreInfo(f); },
+  addrFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreInfo(f, "addr"); },
+  typeFile: t => { const f = t.files[0]; t.value = ""; if (f) importStoreInfo(f, "type"); },
   supPeople: t => { S.supPeople = t.value; render(); },
   supStores: t => { S.supStores = t.value; render(); },
   sup: t => {
@@ -1700,8 +1703,8 @@ async function importSchedFile(file) {
     } catch (e) { b.disabled = false; toast("匯入失敗：" + e.message); }
   };
 }
-// ───────── 匯入門市地址／類型（Excel／CSV）─────────
-async function importStoreInfo(file) {
+// ───────── 匯入門市地址、門市類型（兩個不同檔案；kind＝addr／type）─────────
+async function importStoreInfo(file, kind) {
   let rows;
   try { const X = await loadXLSX(), wb = X.read(await file.arrayBuffer(), { type: "array" }); rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: "" }); }
   catch (e) { return toast("讀取失敗：" + e.message); }
@@ -1710,7 +1713,10 @@ async function importStoreInfo(file) {
   const H = rows[hi].map(v => String(v).replace(/\s/g, ""));
   const col = re => H.findIndex(h => re.test(h));
   const cName = H.findIndex(h => /^(門市|門市名稱|店名|智取店)$/.test(h)) >= 0 ? H.findIndex(h => /^(門市|門市名稱|店名|智取店)$/.test(h)) : col(/門市(?!.*(類型|地址))|店名/);
-  const cAddr = col(/地址/), cHd = col(/^HD/i), cPick = col(/純取件/), cRe = col(/重新分配/), cType = col(/類型/);
+  const cAddr = kind === "addr" ? col(/地址/) : -1;
+  const [cHd, cPick, cRe, cType] = kind === "type" ? [col(/^HD/i), col(/純取件/), col(/重新分配/), col(/類型/)] : [-1, -1, -1, -1];
+  if (kind === "addr" && cAddr < 0) return toast("找不到「地址」欄");
+  if (kind === "type" && cHd < 0 && cPick < 0 && cRe < 0 && cType < 0) return toast("找不到「HD／純取件／重新分配」或「類型」欄");
   const yes = v => /^(v|y|yes|是|有|1|✓|✔|○|o|true)$/i.test(String(v).trim());
   const norm = n => String(n || "").replace(/\s/g, "").replace(/^(智取店?[-－_]?)/, "").replace(/店$/, "");
   const upd = new Map(), miss = [];
@@ -1722,13 +1728,14 @@ async function importStoreInfo(file) {
     if (cAddr >= 0 && String(r[cAddr]).trim()) p.addr = String(r[cAddr]).trim();
     const t = cType >= 0 ? String(r[cType]) : "";
     const flag = (k, c, re) => { if (c >= 0 && String(r[c]).trim() !== "") p[k] = yes(r[c]); else if (cType >= 0) p[k] = re.test(t); };
-    flag("hd", cHd, /HD/i); flag("pick", cPick, /純取件/); flag("rearr", cRe, /重新分配/);
+    if (kind === "type") { flag("hd", cHd, /HD/i); flag("pick", cPick, /純取件/); flag("rearr", cRe, /重新分配/); }
     if (Object.keys(p).length) upd.set(st.id, p);
   }
   if (!upd.size) return toast("沒有可以更新的門市" + (miss.length ? `（對不到：${miss.slice(0, 8).join("、")}）` : ""));
-  const lines = [...upd].map(([id, p]) => { const st = storeBy(id); return `<tr><td>${esc(st.name)}</td><td class="small">${p.addr ? esc(p.addr) : "—"}</td>${["hd", "pick", "rearr"].map(k => `<td class="ctr">${k in p ? (p[k] ? "✓" : "✗") : "—"}</td>`).join("")}</tr>`; }).join("");
-  const m = openModal(`<h2>匯入門市地址／類型</h2><div class="sub">會更新 <b>${upd.size}</b> 家門市（只改檔案裡有填的欄位）${miss.length ? `；<span style="color:#b91c1c">對不到 ${miss.length} 家：${miss.map(esc).join("、")}</span>` : ""}</div>
-    <div class="scrollx" style="max-height:50vh;overflow:auto"><table class="list"><tr><th>門市</th><th>地址</th><th>HD</th><th>純取件</th><th>重新分配</th></tr>${lines}</table></div>
+  const lines = [...upd].map(([id, p]) => { const st = storeBy(id); return `<tr><td>${esc(st.name)}</td>${kind === "addr" ? `<td class="small">${esc(st.addr || "—")}</td><td class="small">${esc(p.addr)}</td>` : ["hd", "pick", "rearr"].map(k => `<td class="ctr">${k in p ? (p[k] ? "✓" : "✗") : "—"}</td>`).join("")}</tr>`; }).join("");
+  const head = kind === "addr" ? "<th>門市</th><th>目前地址</th><th>新地址</th>" : "<th>門市</th><th>HD</th><th>純取件</th><th>重新分配</th>";
+  const m = openModal(`<h2>匯入門市${kind === "addr" ? "地址" : "類型"}</h2><div class="sub">會更新 <b>${upd.size}</b> 家門市（只改檔案裡有填的欄位）${miss.length ? `；<span style="color:#b91c1c">對不到 ${miss.length} 家：${miss.map(esc).join("、")}</span>` : ""}</div>
+    <div class="scrollx" style="max-height:50vh;overflow:auto"><table class="list"><tr>${head}</tr>${lines}</table></div>
     <div class="actions"><span class="spacer"></span><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="go">更新</button></div>`);
   m.onclick = async ev => {
     const b = ev.target.closest("button"); if (!b) return;
