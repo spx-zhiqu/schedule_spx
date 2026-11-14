@@ -6,7 +6,7 @@ import { createStore } from "./store.js?v=5";
    - 主要門市、門市都由使用者自己輸入；頂部選單一次選一間主要門市
    - 班表格子：cells["yyyymmdd_員工id"] = { s: "am"|"pm"|"off", st: [門市id…], n: "備註" }
    ===================================================================== */
-const APP_VER = "v66";
+const APP_VER = "v67";
 const SHIFT = { am: "早班", pm: "晚班" };
 const SH1 = { am: "早", pm: "晚", any: "早晚" };
 const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -106,6 +106,7 @@ const pairs = () => M().pair ?? PAIR_DEFAULT.map(([a, b, sh, n]) => { const A = 
 const PAIR_SH = { am: "早班", pm: "晚班", both: "早晚班" };
 // 晚班 HD 店原則一間一個人；比較不忙的 HD 店（預設中隆、福前）可以再加一間工作量最低的店
 const HDPLUS_DEFAULT = ["中隆", "福前"];
+const HD_DEFAULT = ["中信", "中隆", "昌盛", "富港", "福前", "公園", "福壽"];
 const hdPlus = () => M().hdPlus ?? stores().filter(x => HDPLUS_DEFAULT.includes(x.name)).map(x => x.id);
 // 只限某一班不排一起（ban 是早晚都不排）；預設中原＋昌明晚班太重
 const BAN2_DEFAULT = [["中原", "昌明", "pm"]];
@@ -628,7 +629,7 @@ function autoPlanHub(HUB, plan) {
       const target = Math.max(1, Math.min(cand.length, Math.round(slots)));
       // 有設定路線就照路線（重的先排）；不在任何路線裡的店，照距離另外分組
       // 沒有設定路線時，照門市資料當場自動分組（不會存起來）
-      const rts0 = routesFor(ds, sh, HUB), rts = rts0.length ? rts0 : genRoutes(HUB, sh), toR = l => ({ ids: l.map(s => s.id), n: 1, h: l.reduce((a, s) => a + shHrs(s), 0) });
+      const rts0 = routesFor(ds, sh, HUB), rts = fixHdRoutes(rts0.length ? rts0 : genRoutes(HUB, sh), sh), toR = l => ({ ids: l.map(s => s.id), n: 1, h: l.reduce((a, s) => a + shHrs(s), 0) });
       let routes;
       if (rts.length) {
         // 路線可以帶到別間主要門市的店（例：文衡＋民樂）；別間主要門市路線已經包含的店，這裡不另外排
@@ -768,6 +769,7 @@ function storesHtml() {
     <div class="row" style="margin-bottom:10px">
       <input type="text" id="newStore" placeholder="門市名稱" style="width:110px"><input type="text" id="newStoreAddr" placeholder="地址（選填）" style="width:220px">
       <button class="btn primary" data-act="addStore">新增門市</button>
+      ${HD_DEFAULT.some(n => stores().some(x => x.name === n && !x.hd)) ? `<button class="btn" data-act="hdDefault" title="${HD_DEFAULT.join("、")}">一鍵勾選 HD 店（${HD_DEFAULT.length} 間）</button>` : ""}
       <label class="btn" for="kpiFile" title="直接選營運指標週報（分頁像「智取2026_1019」），不用先改">匯入營運指標週報…</label><input type="file" id="kpiFile" data-ch="storeFile" accept=".xlsx,.xls" hidden>
       <label class="btn" for="addrFile" title="Excel／CSV：門市名稱＋地址">匯入門市地址…</label><input type="file" id="addrFile" data-ch="addrFile" accept=".xlsx,.xls,.csv" hidden>
       <label class="btn" for="typeFile" title="Excel／CSV：門市名稱＋HD、純取件、重新分配">匯入門市類型…</label><input type="file" id="typeFile" data-ch="typeFile" accept=".xlsx,.xls,.csv" hidden>
@@ -894,7 +896,8 @@ function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = 
   // 工作量低的路線：加一間同一間主要門市的「接受支援」門市（不算在每人最多間數裡）（同一間主要門市優先，支援人數少、時數大的先）
   // 只支援本身工作量夠大的店（每班在店時數 ≥ 門檻），避免輕的店互相支援；每家店每班最多 1 人支援
   routes.push(...locked);
-  const lim = supBelow(), supL = all.filter(s => s.hub === hub && needs(s) && isSup(s) && shHrs(s) >= lim);
+  // 晚班 HD 店只給一個人，不當支援對象
+  const lim = supBelow(), supL = all.filter(s => s.hub === hub && needs(s) && isSup(s) && shHrs(s) >= lim && !(sh === "pm" && s.hd));
   if (lim > 0 && supL.length) for (const r of [...routes].sort((a, b) => a.h - b.h)) {
     if (r.h >= lim || r.lock) continue;
     const c = supL.filter(x => !r.st.includes(x) && !ban(r, x) && !(supCnt[x.id] >= 1)).sort((a, b) => ((b.hub === hub) - (a.hub === hub)) || shHrs(b) / (1 + (supCnt[b.id] || 0)) - shHrs(a) / (1 + (supCnt[a.id] || 0)))[0];
@@ -902,6 +905,25 @@ function genRoutes(hub, sh, all = stores(), bl = bansFor(sh), supCnt = {}, pl = 
   }
   const pre = sh === "pm" ? "N" : "R";
   return routes.sort((a, b) => b.h - a.h).map((r, i) => ({ id: uid("t"), code: pre + pad(i + 1), hub, st: r.st.map(s => s.id), sup: r.sup || [], n: r.n || 1 }));
+}
+// 已存的路線若違反晚班 HD 規則（例如之前產生的、或手動加的），自動排班時先拆開：
+// HD 店自己一條、一個人（勾「可再加一間」的保留第二間），其他店另成一條；晚班 HD 店也不接支援
+function fixHdRoutes(rts, sh) {
+  if (sh !== "pm") return rts;
+  const plus = hdPlus(), out = [];
+  for (const rt of rts) {
+    const st = (rt.st || []).filter(id => storeBy(id)), hdI = st.findIndex(id => storeBy(id).hd);
+    const sup = (rt.sup || []).filter(id => !storeBy(id)?.hd);
+    if (hdI < 0) { out.push(sup.length === (rt.sup || []).length ? rt : { ...rt, sup }); continue; }
+    const hd = st[hdI], others = st.filter(id => id !== hd);
+    const keep = plus.includes(hd) && others.length ? [others.filter(id => !storeBy(id).hd && !isNdd(storeBy(id))).sort((a, b) => shHrs(storeBy(a)) - shHrs(storeBy(b)))[0]].filter(Boolean) : [];
+    out.push({ ...rt, st: [hd, ...keep], sup: [], n: 1 });
+    const rest = others.filter(id => !keep.includes(id));
+    if (rest.length) out.push({ ...rt, id: rt.id + "_x", st: rest, sup, n: 1 });
+  }
+  // 拆出來的如果還有 HD 店，再拆一次
+  const bad = r => { const h = r.st.filter(id => storeBy(id).hd); return h.length && (h.length > 1 || r.st.length > (plus.includes(h[0]) ? 2 : 1)); };
+  return out.some(bad) ? fixHdRoutes(out, sh) : out;
 }
 function genAll(list, all = stores(), hs = hubs(), bl = bans(), base = M().routes || {}) {
   // list: [[k, hub]]；取代這幾間主要門市在這些班別的路線，代號同一班別全區連號
@@ -1136,6 +1158,11 @@ const CH = {
   showAll: t => { S.showAllEmps = t.checked; render(); },
   autoStart: t => { if (t.value) { S.autoStart = t.value.replace(/-/g, ""); S.plan = null; watchMonths(); render(); } },
   autoDays: t => { S.autoDays = +t.value; S.plan = null; watchMonths(); render(); },
+  hdDefault: () => {
+    const l = stores().filter(x => HD_DEFAULT.includes(x.name) && !x.hd);
+    if (!confirm(`把 ${l.map(x => x.name).join("、")} 勾成 HD 店？`)) return;
+    saveMaster({ stores: stores().map(x => HD_DEFAULT.includes(x.name) ? { ...x, hd: true } : x) }); toast("已勾選；到「4.路線」重新產生路線");
+  },
   hdPlus: t => { const set = new Set(hdPlus()); t.checked ? set.add(t.dataset.id) : set.delete(t.dataset.id); saveMaster({ hdPlus: [...set] }); toast("已儲存；重新產生晚班路線就會套用"); },
   autoMode: t => { S.autoMode = t.value; ls.set("zq2-automode", t.value); S.plan = null; render(); },
   hName: t => { const nm = t.value.trim(); if (!nm) return render(); saveMaster({ hubs: hubs().map(h => h.id === t.dataset.id ? { ...h, name: nm } : h) }); },
